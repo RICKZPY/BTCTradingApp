@@ -571,8 +571,11 @@ def scheduled_data_update():
         logger.info(f"  - 经济事件: {len(events)} 个")
         logger.info("="*60)
         
+        return True
+        
     except Exception as e:
         logger.error(f"定时任务失败: {e}", exc_info=True)
+        return False
 
 # 定时任务配置（降低频率避免API限制）
 scheduler.add_job(scheduled_data_update, 'interval', minutes=120)  # 每2小时更新
@@ -606,7 +609,7 @@ def index():
             "market_signals": "/api/market/signals",
             "forex_rates": "/api/forex/rates",
             "analysis": "/api/analysis/daily",
-            "refresh": "/api/refresh",
+            "refresh": "/api/refresh (POST)",
             "overview": "/api/overview"
         }
     })
@@ -720,16 +723,39 @@ def get_overview():
         "daily_analysis_preview": store.daily_analysis[:200] + "..." if store.daily_analysis and len(store.daily_analysis) > 200 else store.daily_analysis
     })
 
-@app.route('/api/refresh', methods=['POST'])
+# ============================================================================
+# 修复：添加正确的/refresh路由 - 支持GET和POST两种方法
+# ============================================================================
+@app.route('/api/refresh', methods=['GET', 'POST'])
 def refresh_data():
-    """手动刷新数据"""
-    scheduled_data_update()
-    return jsonify({
-        "status": "success",
-        "message": "数据刷新已触发",
-        "timestamp": datetime.now().isoformat(),
-        "estimated_completion": (datetime.now() + timedelta(seconds=30)).strftime('%Y-%m-%d %H:%M:%S')
-    })
+    """手动刷新数据 - 支持GET和POST请求"""
+    try:
+        logger.info(f"收到手动刷新请求: {request.method}")
+        
+        # 触发数据更新
+        success = scheduled_data_update()
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "数据刷新已触发",
+                "timestamp": datetime.now().isoformat(),
+                "estimated_completion": (datetime.now() + timedelta(seconds=30)).strftime('%Y-%m-%d %H:%M:%S')
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "数据刷新失败，请检查日志",
+                "timestamp": datetime.now().isoformat()
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"刷新数据时出错: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"刷新失败: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 # ============================================================================
 # 错误处理
@@ -750,6 +776,14 @@ def not_found(error):
             "/api/refresh"
         ]
     }), 404
+
+@app.errorhandler(405)
+def method_not_allowed(error):
+    return jsonify({
+        "error": "Method Not Allowed",
+        "message": "请求方法不允许",
+        "allowed_methods": error.description.get('methods', [])
+    }), 405
 
 # ============================================================================
 # 启动应用
