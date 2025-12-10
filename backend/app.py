@@ -354,10 +354,15 @@ def generate_ai_analysis(signal, forex_rates):
 
 要求：专业、直接、具有可操作性，适合专业交易员参考。"""
         
-        # 调用AI API
+        # 调用AI API - 修复401错误
+        headers = {
+            "Authorization": f"Bearer {config.openai_api_key.strip()}",
+            "Content-Type": "application/json"
+        }
+        
         response = requests.post(
             f"{config.openai_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {config.openai_api_key}"},
+            headers=headers,
             json={
                 "model": "gpt-4o-mini",
                 "messages": [
@@ -373,7 +378,7 @@ def generate_ai_analysis(signal, forex_rates):
         if response.status_code == 200:
             return response.json()['choices'][0]['message']['content']
         else:
-            logger.error(f"AI API错误: {response.status_code}")
+            logger.error(f"AI API错误: {response.status_code}, 响应: {response.text[:200]}")
             return f"AI分析生成失败 (HTTP {response.status_code})"
             
     except Exception as e:
@@ -431,9 +436,15 @@ def generate_daily_summary(signals, forex_rates):
 
 要求：视野宏观、逻辑清晰、直接服务于当日交易决策。"""
         
+        # 调用AI API - 修复401错误
+        headers = {
+            "Authorization": f"Bearer {config.openai_api_key.strip()}",
+            "Content-Type": "application/json"
+        }
+        
         response = requests.post(
             f"{config.openai_base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {config.openai_api_key}"},
+            headers=headers,
             json={
                 "model": "gpt-4o-mini",
                 "messages": [
@@ -449,6 +460,7 @@ def generate_daily_summary(signals, forex_rates):
         if response.status_code == 200:
             return response.json()['choices'][0]['message']['content']
         else:
+            logger.error(f"AI总结API错误: {response.status_code}")
             return "【AI总结生成失败】"
             
     except Exception as e:
@@ -502,6 +514,13 @@ scheduler.start()
 
 
 # ============================================================================
+# 请求日志中间件
+# ============================================================================
+@app.before_request
+def log_request_info():
+    logger.info(f"收到请求: {request.method} {request.path}")
+
+# ============================================================================
 # Flask路由 (适配新的数据格式)
 # ============================================================================
 @app.route('/')
@@ -516,8 +535,84 @@ def index():
             "market_signals": "/api/market/signals",
             "forex": "/api/forex/rates",
             "summary": "/api/summary/today",
-            "refresh": "/api/refresh"
+            "refresh": "/api/refresh",
+            "status": "/api/status",
+            "events": "/api/events/today",
+            "all_data": "/api/data"
         }
+    })
+
+
+@app.route('/api/status')
+def get_api_status():
+    """兼容原有前端的 /api/status 路由"""
+    signals = store.get_market_signals()
+    rates = store.get_forex_rates()
+    
+    return jsonify({
+        "status": "healthy",
+        "mode": "real-time",
+        "data_sources": ["Ziwox Market Signals", "Alpha Vantage Forex"],
+        "monitoring_pairs": config.watch_currency_pairs,
+        "signals_count": len(signals),
+        "rates_count": len(rates),
+        "ai_enabled": config.enable_ai,
+        "last_updated": store.last_updated.isoformat() if store.last_updated else None,
+        "message": "宏观经济AI分析工具（增强版）运行正常",
+        "version": "2.0 - 支持贵金属与加密货币"
+    })
+
+
+@app.route('/api/events/today')
+def get_today_events():
+    """兼容原有前端的 /api/events/today 路由"""
+    signals = store.get_market_signals()
+    
+    # 如果当前没有数据，立即获取一次
+    if not signals:
+        logger.info("数据为空，触发实时数据获取")
+        scheduled_update()
+        signals = store.get_market_signals()
+    
+    # 转换格式以兼容原有前端
+    events = []
+    for i, signal in enumerate(signals[:8]):  # 只取前8个作为"今日事件"
+        events.append({
+            "time": datetime.now().strftime("%H:%M"),
+            "country": config.currency_to_country.get(signal.get('pair', 'USD')[:3], 'GLOBAL'),
+            "name": f"{signal.get('pair', '')} 市场信号",
+            "forecast": signal.get('fundamental_bias', 'Neutral'),
+            "previous": signal.get('d1_trend', 'NEUTRAL'),
+            "importance": 2 if 'XAU' in signal.get('pair', '') or 'BTC' in signal.get('pair', '') else 1,
+            "currency": signal.get('pair', '')[:3],
+            "actual": signal.get('fundamental_power', '--'),
+            "ai_analysis": signal.get('ai_analysis', '无分析'),
+            "id": signal.get('id', i)
+        })
+    
+    return jsonify({
+        "status": "success",
+        "data": events,
+        "generated_at": datetime.now().isoformat(),
+        "note": "注意：当前使用实时市场信号数据，将交易品种转换为事件格式",
+        "total_signals": len(signals)
+    })
+
+
+@app.route('/api/data')
+def get_all_data():
+    """获取所有数据（兼容原有前端）"""
+    signals = store.get_market_signals()
+    rates = store.get_forex_rates()
+    summary = store.get_summary()
+    
+    return jsonify({
+        "status": "success",
+        "market_signals": signals,
+        "forex_rates": rates,
+        "summary": summary,
+        "last_updated": store.last_updated.isoformat() if store.last_updated else None,
+        "total_data": len(signals) + len(rates)
     })
 
 
@@ -576,6 +671,38 @@ def refresh_data():
 
 
 # ============================================================================
+# 错误处理
+# ============================================================================
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        "error": "Not Found",
+        "message": "请求的资源不存在",
+        "available_routes": [
+            "/",
+            "/api/status", 
+            "/api/events/today",
+            "/api/data",
+            "/api/market/signals",
+            "/api/forex/rates",
+            "/api/summary/today",
+            "/api/refresh"
+        ],
+        "documentation": "请访问根路径查看所有可用API"
+    }), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"服务器内部错误: {error}")
+    return jsonify({
+        "error": "Internal Server Error",
+        "message": "服务器处理请求时发生错误",
+        "timestamp": datetime.now().isoformat()
+    }), 500
+
+
+# ============================================================================
 # 启动应用
 # ============================================================================
 if __name__ == '__main__':
@@ -583,12 +710,20 @@ if __name__ == '__main__':
     logger.info(f"数据模式: {'实时数据' if not config.use_mock else '模拟模式'}")
     logger.info(f"监控品种: {config.watch_currency_pairs}")
     logger.info(f"数据源: Ziwox (市场信号) + Alpha Vantage (实时汇率与贵金属/加密货币)")
+    logger.info(f"AI功能: {'已启用' if config.enable_ai else '已禁用'}")
     
     # 首次启动时获取数据
-    scheduled_update()
+    try:
+        scheduled_update()
+    except Exception as e:
+        logger.error(f"首次数据获取失败: {e}")
+    
+    # 获取端口配置
+    port = int(os.getenv('PORT', 5000))
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
     
     app.run(
         host='0.0.0.0',
-        port=int(os.getenv('FLASK_PORT', 5000)),
-        debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+        port=port,
+        debug=debug_mode
     )
