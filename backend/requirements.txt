@@ -8,5 +8,7 @@ beautifulsoup4==4.14.3
 lxml==6.0.2
 pandas==2.3.3
 APScheduler==3.10.4
-
+icalendar==5.0.11
+pycountry==24.6.1
+pytz==2024.2
 
