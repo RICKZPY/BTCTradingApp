@@ -8,4 +8,4 @@ beautifulsoup4==4.12.2
 lxml==6.0.2
 pandas==2.1.4
 APScheduler==3.10.4
-market-calendar-tool==1.0.0
+market-calendar-tool==0.2.2
