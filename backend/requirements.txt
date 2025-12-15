@@ -8,7 +8,7 @@ beautifulsoup4==4.14.3
 lxml==6.0.2
 pandas==2.3.3
 APScheduler==3.10.4
-market-calendar-tool==0.2.2
+market-calendar-tool==0.2.0
 asyncio==3.4.3
 loguru==0.7.3
 pyarrow==17.0.0
