@@ -84,6 +84,7 @@ class DataStore:
             "outlook": "",
             "risks": ""
         }
+        self.summary_sections_by_lang = {}  # 按语言存储总结章节
         self.currency_pairs_summary = []  # 货币对摘要信息
 
     def update_all(self, signals, rates, events, analysis, summary_sections=None, individual_analysis=None, currency_pairs_summary=None):
@@ -753,18 +754,19 @@ def add_ai_analysis_to_events(events):
 # ============================================================================
 # 模块4：AI综合分析生成 (laozhang.ai) - 修复self错误并加入实时数据
 # ============================================================================
-def generate_ai_analysis_for_event(event):
-    """为单个事件生成AI分析"""
+def generate_ai_analysis_for_event(event, language='zh-CN'):
+    """为单个事件生成AI分析（支持多语言）"""
     if not config.enable_ai:
-        return "【AI分析】AI分析功能当前已禁用"
+        return t_ai("【AI分析】AI分析功能当前已禁用", language)
     
     api_key = config.openai_api_key.strip()
     if not api_key or len(api_key) < 30:
-        return "【AI分析】API密钥配置无效"
+        return t_ai("【AI分析】API密钥配置无效", language)
     
     try:
-        # 构建提示词
-        prompt = f"""你是一位专业的宏观外汇分析师。请基于以下经济事件，生成简要的AI分析：
+        # 根据语言构建提示词
+        if language == 'zh-CN':
+            prompt = f"""你是一位专业的宏观外汇分析师。请基于以下经济事件，生成简要的AI分析：
 
 事件信息：
 - 国家：{event.get('country', '未知')}
@@ -780,6 +782,23 @@ def generate_ai_analysis_for_event(event):
 3. 1-2条具体的交易建议（方向、入场区域、止损）
 
 请控制在150字以内，直接给出分析，不要多余说明。"""
+        else:  # 英文
+            prompt = f"""You are a professional macro FX analyst. Please generate a brief AI analysis based on the following economic event:
+
+Event Information:
+- Country: {event.get('country', 'Unknown')}
+- Event: {event.get('name', 'Unknown Event')}
+- Time: {event.get('date', '')} {event.get('time', '')} (Beijing Time)
+- Forecast: {event.get('forecast', 'N/A')}
+- Previous: {event.get('previous', 'N/A')}
+- Importance: Level {event.get('importance', 1)}
+
+Please analyze in English:
+1. Possible impact of this event on related currencies
+2. Comparison between market expectations and actual results
+3. 1-2 specific trading suggestions (direction, entry zone, stop loss)
+
+Keep within 150 words, provide analysis directly without extra explanations."""
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -789,7 +808,7 @@ def generate_ai_analysis_for_event(event):
         request_body = {
             "model": "gpt-3.5-turbo",
             "messages": [
-                {"role": "system", "content": "你是一位经验丰富的外汇宏观交易员，擅长给出清晰、直接、可执行的交易分析。"},
+                {"role": "system", "content": t_ai("你是一位经验丰富的外汇宏观交易员，擅长给出清晰、直接、可执行的交易分析。", language)},
                 {"role": "user", "content": prompt}
             ],
             "max_tokens": 300,
@@ -807,27 +826,56 @@ def generate_ai_analysis_for_event(event):
             result = response.json()
             if 'choices' in result and len(result['choices']) > 0:
                 ai_content = result['choices'][0]['message']['content']
-                return f"【AI分析】{ai_content}"
+                prefix = t_ai("【AI分析】", language)
+                return f"{prefix}{ai_content}"
         else:
             logger.warning(f"AI分析请求失败: {response.status_code}")
-            return "【AI分析】数据更新中..."
+            return t_ai("【AI分析】数据更新中...", language)
             
     except Exception as e:
         logger.error(f"生成AI分析时出错: {e}")
     
-    return "【AI分析】分析生成中..."
+    return t_ai("【AI分析】分析生成中...", language)
 
-def generate_comprehensive_analysis_with_sections(signals, rates, events):
-    """生成综合AI分析，并分章节"""
+# 新增：AI分析文本翻译函数
+def t_ai(text, language='zh-CN'):
+    """翻译AI分析相关文本"""
+    translations = {
+        'zh-CN': {
+            "【AI分析】AI分析功能当前已禁用": "【AI分析】AI分析功能当前已禁用",
+            "【AI分析】API密钥配置无效": "【AI分析】API密钥配置无效",
+            "【AI分析】数据更新中...": "【AI分析】数据更新中...",
+            "【AI分析】分析生成中...": "【AI分析】分析生成中...",
+            "【AI分析】分析生成失败，请稍后重试": "【AI分析】分析生成失败，请稍后重试",
+            "你是一位经验丰富的外汇宏观交易员，擅长给出清晰、直接、可执行的交易分析。": "你是一位经验丰富的外汇宏观交易员，擅长给出清晰、直接、可执行的交易分析。",
+            "【AI分析】": "【AI分析】"
+        },
+        'en-US': {
+            "【AI分析】AI分析功能当前已禁用": "[AI Analysis] AI analysis function is currently disabled",
+            "【AI分析】API密钥配置无效": "[AI Analysis] API key configuration is invalid",
+            "【AI分析】数据更新中...": "[AI Analysis] Data updating...",
+            "【AI分析】分析生成中...": "[AI Analysis] Analysis generating...",
+            "【AI分析】分析生成失败，请稍后重试": "[AI Analysis] Analysis generation failed, please try again later",
+            "你是一位经验丰富的外汇宏观交易员，擅长给出清晰、直接、可执行的交易分析。": "You are an experienced macro FX trader, skilled at providing clear, direct, and actionable trading analysis.",
+            "【AI分析】": "[AI Analysis] "
+        }
+    }
+    
+    if language in translations and text in translations[language]:
+        return translations[language][text]
+    return text
+
+def generate_comprehensive_analysis_with_sections(signals, rates, events, language='zh-CN'):
+    """生成综合AI分析，并分章节（支持多语言）"""
     if not config.enable_ai:
         logger.info("AI分析功能已被禁用")
         return {
-            "summary": "【AI分析】AI分析功能当前已禁用。",
+            "summary": t_ai("【AI分析】AI分析功能当前已禁用。", language),
             "sections": {
-                "market": "市场分析功能当前已禁用。",
-                "events": "事件分析功能当前已禁用。",
-                "outlook": "展望功能当前已禁用。",
-                "risks": "风险提示功能当前已禁用。"
+                "market": t_ai("市场分析功能当前已禁用。", language),
+                "events": t_ai("事件分析功能当前已禁用。", language),
+                "outlook": t_ai("展望功能当前已禁用。", language),
+                "risks": t_ai("风险提示功能当前已禁用。", language)
             }
         }
     
@@ -835,16 +883,16 @@ def generate_comprehensive_analysis_with_sections(signals, rates, events):
     if not api_key or len(api_key) < 30:
         logger.error("laozhang.ai API密钥无效或过短")
         return {
-            "summary": "【AI分析】错误：API密钥配置无效。",
+            "summary": t_ai("【AI分析】错误：API密钥配置无效。", language),
             "sections": {
-                "market": "API密钥配置无效。",
-                "events": "API密钥配置无效。",
-                "outlook": "API密钥配置无效。",
-                "risks": "API密钥配置无效。"
+                "market": t_ai("API密钥配置无效。", language),
+                "events": t_ai("API密钥配置无效。", language),
+                "outlook": t_ai("API密钥配置无效。", language),
+                "risks": t_ai("API密钥配置无效。", language)
             }
         }
     
-    logger.info("开始生成综合AI分析（分章节）...")
+    logger.info(f"开始生成综合AI分析（分章节）- 语言: {language}")
     
     try:
         # 重要事件统计
@@ -870,7 +918,8 @@ def generate_comprehensive_analysis_with_sections(signals, rates, events):
                 market_data.append(f"{pair}: {rate}")
         
         # 构建提示词，要求分章节生成，特别关注贵金属和加密货币
-        prompt = f"""你是一位专业的宏观外汇策略分析师。请基于以下实时数据，生成一份结构化的今日外汇市场分析报告。
+        if language == 'zh-CN':
+            prompt = f"""你是一位专业的宏观外汇策略分析师。请基于以下实时数据，生成一份结构化的今日外汇市场分析报告。
 
 【实时市场价格】
 {chr(10).join(market_data) if market_data else "暂无实时市场数据"}
@@ -888,16 +937,41 @@ def generate_comprehensive_analysis_with_sections(signals, rates, events):
 
 每个章节请控制在150-200字，使用中文，简洁专业。
 特别要求：对黄金、白银、比特币的分析必须准确反映当前价格水平。"""
+        else:
+            prompt = f"""You are a professional macro FX strategy analyst. Please generate a structured daily FX market analysis report based on the following real-time data.
+
+【Real-time Market Prices】
+{chr(10).join(market_data) if market_data else "No real-time market data available"}
+
+【Key Economic Events This Week】
+{chr(10).join([f"- {name}" for name in event_names]) if event_names else "No important economic events this week"}
+
+【Analysis Requirements】
+Please organize the analysis according to the following section structure, each section in separate paragraphs:
+
+1. Market Overview (market): Overall market conditions and main characteristics based on current price levels
+2. Event Analysis (events): Analysis and expectations for this week's key economic events, especially impacts on gold (XAU/USD), silver (XAG/USD), and bitcoin (BTC/USD)
+3. Currency Pair Outlook (outlook): Technical analysis and key levels for major currency pairs (EUR/USD, USD/JPY, GBP/USD, AUD/USD) and precious metals/cryptocurrencies (XAU/USD, XAG/USD, BTC/USD), must be based on the above real-time prices
+4. Risk Warning (risks): Main trading risks and precautions for today
+
+Each section should be 150-200 words, in English, concise and professional.
+Special requirement: Analysis of gold, silver, and bitcoin must accurately reflect current price levels."""
 
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
+        # 修改系统提示词
+        system_prompt = {
+            'zh-CN': "你是一位经验丰富的外汇和贵金属交易员，擅长基于实时数据给出结构化、清晰、可执行的交易分析。",
+            'en-US': "You are an experienced FX and precious metals trader, skilled at providing structured, clear, and actionable trading analysis based on real-time data."
+        }
+        
         request_body = {
             "model": "gpt-4",
             "messages": [
-                {"role": "system", "content": "你是一位经验丰富的外汇和贵金属交易员，擅长基于实时数据给出结构化、清晰、可执行的交易分析。"},
+                {"role": "system", "content": system_prompt.get(language, system_prompt['zh-CN'])},
                 {"role": "user", "content": prompt}
             ],
             "max_tokens": 1500,
@@ -917,7 +991,7 @@ def generate_comprehensive_analysis_with_sections(signals, rates, events):
                 ai_content = result['choices'][0]['message']['content']
                 
                 # 解析AI回复，分章节
-                sections = parse_ai_response_into_sections(ai_content)
+                sections = parse_ai_response_into_sections(ai_content, language)
                 
                 # 确保货币对展望包含实时价格
                 sections = enhance_sections_with_real_data(sections, signals, rates)
@@ -931,10 +1005,10 @@ def generate_comprehensive_analysis_with_sections(signals, rates, events):
         logger.error(f"生成综合AI分析时出错: {e}")
     
     # 失败时返回默认数据
-    return get_default_analysis_sections()
+    return get_default_analysis_sections(language)
 
-def parse_ai_response_into_sections(ai_content):
-    """解析AI回复，分章节提取内容"""
+def parse_ai_response_into_sections(ai_content, language='zh-CN'):
+    """解析AI回复，分章节提取内容（支持多语言）"""
     sections = {
         "market": "等待AI分析生成...",
         "events": "等待AI分析生成...",
@@ -945,7 +1019,19 @@ def parse_ai_response_into_sections(ai_content):
     if not ai_content:
         return sections
     
-    # 尝试按章节解析
+    # 根据语言设置章节关键词
+    if language == 'zh-CN':
+        market_keywords = ["市场概况", "市场分析"]
+        events_keywords = ["事件分析", "经济事件"]
+        outlook_keywords = ["货币对展望", "货币展望", "交易展望"]
+        risks_keywords = ["风险提示", "风险分析", "注意事项"]
+    else:  # English
+        market_keywords = ["Market Overview", "Market Analysis", "Market Summary"]
+        events_keywords = ["Event Analysis", "Economic Events", "Key Events"]
+        outlook_keywords = ["Currency Outlook", "Pair Outlook", "Trading Outlook"]
+        risks_keywords = ["Risk Warning", "Risk Analysis", "Important Notes"]
+    
+    # 解析逻辑保持不变，使用多语言关键词
     lines = ai_content.split('\n')
     current_section = None
     current_content = []
@@ -953,23 +1039,23 @@ def parse_ai_response_into_sections(ai_content):
     for line in lines:
         line = line.strip()
         
-        # 检测章节标题
-        if "市场概况" in line or "市场概况（market）" in line:
+        # 检测章节标题 - 多语言支持
+        if any(keyword in line for keyword in market_keywords):
             if current_section and current_content:
                 sections[current_section] = ' '.join(current_content)
             current_section = "market"
             current_content = []
-        elif "事件分析" in line or "事件分析（events）" in line:
+        elif any(keyword in line for keyword in events_keywords):
             if current_section and current_content:
                 sections[current_section] = ' '.join(current_content)
             current_section = "events"
             current_content = []
-        elif "货币对展望" in line or "货币对展望（outlook）" in line:
+        elif any(keyword in line for keyword in outlook_keywords):
             if current_section and current_content:
                 sections[current_section] = ' '.join(current_content)
             current_section = "outlook"
             current_content = []
-        elif "风险提示" in line or "风险提示（risks）" in line:
+        elif any(keyword in line for keyword in risks_keywords):
             if current_section and current_content:
                 sections[current_section] = ' '.join(current_content)
             current_section = "risks"
@@ -1015,17 +1101,28 @@ def enhance_sections_with_real_data(sections, signals, rates):
     
     return sections
 
-def get_default_analysis_sections():
+def get_default_analysis_sections(language='zh-CN'):
     """获取默认的分析章节"""
-    return {
-        "summary": "【AI分析】基于实时数据生成分析中...",
-        "sections": {
-            "market": "正在分析实时市场数据...",
-            "events": "正在分析实时经济事件...",
-            "outlook": "正在生成货币对展望...",
-            "risks": "正在评估交易风险..."
+    if language == 'zh-CN':
+        return {
+            "summary": "【AI分析】基于实时数据生成分析中...",
+            "sections": {
+                "market": "正在分析实时市场数据...",
+                "events": "正在分析实时经济事件...",
+                "outlook": "正在生成货币对展望...",
+                "risks": "正在评估交易风险..."
+            }
         }
-    }
+    else:
+        return {
+            "summary": "[AI Analysis] Generating analysis based on real-time data...",
+            "sections": {
+                "market": "Analyzing real-time market data...",
+                "events": "Analyzing real-time economic events...",
+                "outlook": "Generating currency pair outlook...",
+                "risks": "Assessing trading risks..."
+            }
+        }
 
 # ============================================================================
 # 新增：货币对摘要生成函数
@@ -1132,22 +1229,27 @@ def execute_data_update():
 
         # 4. 生成综合AI分析（分章节）
         logger.info("阶段4/4: 生成综合AI分析（分章节）...")
-        analysis_result = generate_comprehensive_analysis_with_sections(signals, rates, events)
-        
-        sections = analysis_result.get("sections", {})
+        # 为每种语言生成分析
+        languages = ['zh-CN', 'en-US']
+        for lang in languages:
+            analysis_result = generate_comprehensive_analysis_with_sections(signals, rates, events, lang)
+            sections = analysis_result.get("sections", {})
+            if not hasattr(store, 'summary_sections_by_lang'):
+                store.summary_sections_by_lang = {}
+            store.summary_sections_by_lang[lang] = sections
         
         # 5. 生成货币对摘要
         logger.info("阶段5/4: 生成货币对摘要...")
         currency_pairs_summary = generate_currency_pairs_summary(signals, rates)
 
         # 6. 存储数据
-        store.update_all(signals, rates, events, "实时AI分析报告", sections, None, currency_pairs_summary)
+        store.update_all(signals, rates, events, "实时AI分析报告", None, None, currency_pairs_summary)
 
         logger.info(f"数据更新成功完成:")
         logger.info(f"  - 市场信号: {len(signals)} 个")
         logger.info(f"  - 汇率数据: {len(rates)} 个")
         logger.info(f"  - 财经日历: {len(events)} 个（完整版）")
-        logger.info(f"  - AI分析章节: {len(sections)} 个")
+        logger.info(f"  - AI分析章节: {len(store.summary_sections_by_lang)} 种语言")
         logger.info(f"  - 货币对摘要: {len(currency_pairs_summary)} 个")
         logger.info("="*60)
         return True
@@ -1286,6 +1388,9 @@ def refresh_data():
 @app.route('/api/events/today')
 def get_today_events():
     """获取今日事件 - 完整版，按时间排序"""
+    # 从查询参数获取语言，默认为中文
+    language = request.args.get('lang', 'zh-CN')
+    
     events = store.economic_events
     
     # 如果没有数据且不在更新中，执行一次更新
@@ -1293,30 +1398,34 @@ def get_today_events():
         success = execute_data_update()
         events = store.economic_events if success else []
     
-    # 确保每个事件都有ai_analysis字段
+    # 为每个事件生成对应语言的AI分析
+    events_with_lang = []
     for event in events:
-        if 'ai_analysis' not in event:
-            event['ai_analysis'] = "【AI分析】分析生成中..."
+        event_copy = event.copy()
+        if 'ai_analysis' not in event_copy:
+            # 获取事件的AI分析
+            event_copy['ai_analysis'] = generate_ai_analysis_for_event(event_copy, language)
+        events_with_lang.append(event_copy)
     
     # 统计信息
-    total_events = len(events)
-    high_impact = len([e for e in events if e.get('importance', 1) == 3])
-    medium_impact = len([e for e in events if e.get('importance', 1) == 2])
-    low_impact = len([e for e in events if e.get('importance', 1) == 1])
+    total_events = len(events_with_lang)
+    high_impact = len([e for e in events_with_lang if e.get('importance', 1) == 3])
+    medium_impact = len([e for e in events_with_lang if e.get('importance', 1) == 2])
+    low_impact = len([e for e in events_with_lang if e.get('importance', 1) == 1])
     
     # 检查今天的事件
     today = datetime.now(timezone(timedelta(hours=8))).date()
     today_str = today.strftime("%Y-%m-%d")
-    today_events = [e for e in events if e.get('date') == today_str]
+    today_events = [e for e in events_with_lang if e.get('date') == today_str]
     
     # 检查明天的事件
     tomorrow = today + timedelta(days=1)
     tomorrow_str = tomorrow.strftime("%Y-%m-%d")
-    tomorrow_events = [e for e in events if e.get('date') == tomorrow_str]
+    tomorrow_events = [e for e in events_with_lang if e.get('date') == tomorrow_str]
     
     return jsonify({
         "status": "success",
-        "data": events,
+        "data": events_with_lang,
         "count": total_events,
         "importance_stats": {
             "high": high_impact,
@@ -1331,13 +1440,17 @@ def get_today_events():
         },
         "generated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(),
         "timezone": "北京时间 (UTC+8)",
+        "language": language,
         "note": "事件已按日期时间排序（从最近到最远）"
     })
 
 @app.route('/api/summary')
 def get_today_summary():
     """获取今日总结 - 分章节版本，包含货币对摘要"""
-    sections = store.summary_sections
+    # 从查询参数获取语言，默认为中文
+    language = request.args.get('lang', 'zh-CN')
+    
+    sections = store.summary_sections_by_lang.get(language, {})
     currency_pairs = store.currency_pairs_summary
     
     # 计算高影响事件数量
@@ -1364,17 +1477,22 @@ def get_today_summary():
         "high_impact_events_count": high_impact_count,
         "generated_at": generated_at.isoformat(),
         "ai_enabled": config.enable_ai,
+        "language": language,
         "timezone": "北京时间 (UTC+8)"
     })
 
 @app.route('/api/summary/sections')
 def get_summary_sections():
     """专门获取各个章节的内容 - 供前端使用"""
-    sections = store.summary_sections
+    # 从查询参数获取语言，默认为中文
+    language = request.args.get('lang', 'zh-CN')
+    
+    sections = store.summary_sections_by_lang.get(language, {})
     
     return jsonify({
         "status": "success",
         "sections": sections,
+        "language": language,
         "generated_at": store.last_updated.isoformat() if store.last_updated else datetime.now(timezone(timedelta(hours=8))).isoformat()
     })
 
@@ -1446,7 +1564,7 @@ def get_overview():
             "low": low_count
         },
         "has_ai_analysis": bool(store.daily_analysis and len(store.daily_analysis) > 10),
-        "has_summary_sections": bool(store.summary_sections and len(store.summary_sections) > 0)
+        "has_summary_sections": bool(store.summary_sections_by_lang and len(store.summary_sections_by_lang) > 0)
     })
 
 # ============================================================================
