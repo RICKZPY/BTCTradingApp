@@ -503,27 +503,218 @@ def get_country_code_from_currency(country_str):
     
     return country_str[:2] if len(country_str) >= 2 else "GL"
 
-def fetch_economic_calendar():
-    """主函数：获取财经日历"""
-    # 获取原始事件
-    events = fetch_calendar_forex_factory()
+def format_price(pair, price):
+    """格式化价格显示"""
+    if not price or price == 0:
+        return "N/A"
     
-    # 为重要事件添加AI分析
-    events_with_ai = add_ai_analysis_to_events(events)
-    
-    return events_with_ai
+    try:
+        price_num = float(price)
+        if pair in ['XAUUSD', 'XAGUSD']:
+            return f"{price_num:.2f}"
+        elif pair == 'BTCUSD':
+            return f"{int(price_num)}"
+        else:
+            if price_num < 10:
+                return f"{price_num:.5f}"
+            else:
+                return f"{price_num:.4f}"
+    except:
+        return str(price)
 
-def add_ai_analysis_to_events(events):
-    """为事件添加AI分析"""
+def get_real_time_price_by_pair(pair, signals, rates):
+    """获取特定货币对的实时价格"""
+    # 优先从rates获取
+    if pair in rates:
+        price = rates[pair].get('rate')
+        if price and price > 0:
+            return price
+    
+    # 从signals获取
+    for signal in signals:
+        if signal.get('pair') == pair:
+            price = signal.get('last_price')
+            if price and price > 0:
+                return price
+    
+    return None
+
+def get_price_for_pair(pair, signals, rates):
+    """获取价格字符串"""
+    price = get_real_time_price_by_pair(pair, signals, rates)
+    if price:
+        return format_price(pair, price)
+    return "价格获取中"
+
+def get_section_name(section_key):
+    """获取章节名称"""
+    names = {
+        "market": "市场概况",
+        "events": "事件分析",
+        "outlook": "交易展望",
+        "risks": "风险提示"
+    }
+    return names.get(section_key, "分析")
+
+# ============================================================================
+# 模块4：AI综合分析生成 (laozhang.ai) - 完全重写版，强制使用实时数据
+# ============================================================================
+def generate_ai_analysis_for_event(event, signals=None, rates=None):
+    """为单个事件生成AI分析 - 改进版，支持实时数据"""
+    if not config.enable_ai:
+        return "【AI分析】AI分析功能当前已禁用"
+    
+    api_key = config.openai_api_key.strip()
+    if not api_key or len(api_key) < 30:
+        return "【AI分析】API密钥配置无效"
+    
+    try:
+        # 获取相关货币对的实时价格
+        current_price_info = ""
+        currency = event.get('currency', '')
+        event_name = event.get('name', '').lower()
+        
+        # 确定受影响的货币对
+        affected_pairs = []
+        
+        # 基于事件货币判断主要受影响货币对
+        if currency and currency != 'USD':
+            # 如果不是美元，则可能是EUR/USD, GBP/USD等
+            if currency == 'EUR':
+                affected_pairs.append('EURUSD')
+            elif currency == 'GBP':
+                affected_pairs.append('GBPUSD')
+            elif currency == 'JPY':
+                affected_pairs.append('USDJPY')
+            elif currency == 'CHF':
+                affected_pairs.append('USDCHF')
+            elif currency == 'CNY':
+                affected_pairs.append('USDCNH')
+            elif currency == 'AUD':
+                affected_pairs.append('AUDUSD')
+            elif currency == 'XAU':
+                affected_pairs.append('XAUUSD')
+            elif currency == 'XAG':
+                affected_pairs.append('XAGUSD')
+            elif currency == 'BTC':
+                affected_pairs.append('BTCUSD')
+        
+        # 基于事件名称关键词判断
+        if 'euro' in event_name or 'ecb' in event_name or 'european' in event_name:
+            if 'EURUSD' not in affected_pairs:
+                affected_pairs.append('EURUSD')
+        elif 'pound' in event_name or 'boe' in event_name or 'british' in event_name:
+            if 'GBPUSD' not in affected_pairs:
+                affected_pairs.append('GBPUSD')
+        elif 'yen' in event_name or 'boj' in event_name or 'japan' in event_name:
+            if 'USDJPY' not in affected_pairs:
+                affected_pairs.append('USDJPY')
+        elif 'gold' in event_name or 'xau' in event_name:
+            if 'XAUUSD' not in affected_pairs:
+                affected_pairs.append('XAUUSD')
+        elif 'silver' in event_name or 'xag' in event_name:
+            if 'XAGUSD' not in affected_pairs:
+                affected_pairs.append('XAGUSD')
+        elif 'bitcoin' in event_name or 'btc' in event_name or 'crypto' in event_name:
+            if 'BTCUSD' not in affected_pairs:
+                affected_pairs.append('BTCUSD')
+        
+        # 获取实时价格
+        real_time_prices = []
+        if signals and rates and affected_pairs:
+            for pair in affected_pairs[:3]:  # 最多3个相关货币对
+                # 从rates获取
+                rate_info = rates.get(pair)
+                if rate_info:
+                    price = rate_info.get('rate', 0)
+                    if price > 0:
+                        formatted_price = format_price(pair, price)
+                        real_time_prices.append(f"{pair}: {formatted_price}")
+                else:
+                    # 从signals获取
+                    signal = next((s for s in signals if s.get('pair') == pair), None)
+                    if signal and signal.get('last_price', 0) > 0:
+                        price = signal.get('last_price')
+                        formatted_price = format_price(pair, price)
+                        real_time_prices.append(f"{pair}: {formatted_price}")
+        
+        # 构建提示词 - 包含实时价格信息
+        price_context = ""
+        if real_time_prices:
+            price_context = f"\n\n【当前实时价格】\n{chr(10).join(real_time_prices)}"
+        
+        prompt = f"""你是一位专业的宏观外汇分析师。请基于以下经济事件和当前市场状况，生成简要的AI分析：
+
+事件信息：
+- 国家：{event.get('country', '未知')}
+- 事件：{event.get('name', '未知事件')}
+- 时间：{event.get('date', '')} {event.get('time', '')}（北京时间）
+- 预测值：{event.get('forecast', 'N/A')}
+- 前值：{event.get('previous', 'N/A')}
+- 重要性：{event.get('importance', 1)}级
+{price_context}
+
+请用中文分析：
+1. 该事件对相关货币的可能影响，必须基于当前价格水平
+2. 市场预期与实际情况的对比
+3. 1-2条具体的交易建议（方向、入场区域、止损），必须基于当前价格
+
+请控制在150字以内，直接给出分析，不要多余说明。必须引用当前价格数据。"""
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        request_body = {
+            "model": "gpt-3.5-turbo",
+            "messages": [
+                {"role": "system", "content": "你是一位经验丰富的外汇宏观交易员。你必须基于用户提供的当前价格数据进行分析，并在分析中明确引用这些价格。不要使用过时的价格数据。"},
+                {"role": "user", "content": prompt}
+            ],
+            "max_tokens": 400,
+            "temperature": 0.4
+        }
+
+        response = requests.post(
+            f"{config.openai_base_url}/chat/completions",
+            headers=headers,
+            json=request_body,
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                ai_content = result['choices'][0]['message']['content']
+                
+                # 检查是否包含实时价格
+                if real_time_prices and not any(price in ai_content for price in real_time_prices):
+                    # 如果不包含价格，添加到分析中
+                    price_summary = ', '.join(real_time_prices)
+                    ai_content = f"【当前价格：{price_summary}】\n{ai_content}"
+                
+                return f"【AI分析】{ai_content}"
+        else:
+            logger.warning(f"AI分析请求失败: {response.status_code}")
+            return "【AI分析】数据更新中..."
+            
+    except Exception as e:
+        logger.error(f"生成AI分析时出错: {e}")
+    
+    return "【AI分析】分析生成中..."
+
+def add_ai_analysis_to_events(events, signals=None, rates=None):
+    """为事件添加AI分析，传入实时数据"""
     if not events or not config.enable_ai:
         return events
     
-    # 只为重要性较高的事件生成AI分析（最多10个）
+    # 只为重要性较高的事件生成AI分析
     important_events = [e for e in events if e.get('importance', 1) >= 2][:10]
     
     for event in important_events:
         try:
-            ai_analysis = generate_ai_analysis_for_event(event)
+            ai_analysis = generate_ai_analysis_for_event(event, signals, rates)
             event['ai_analysis'] = ai_analysis
             time.sleep(0.5)  # 避免API调用过于频繁
         except Exception as e:
@@ -537,9 +728,19 @@ def add_ai_analysis_to_events(events):
     
     return events
 
-# ============================================================================
-# 模块4：AI综合分析生成 (laozhang.ai) - 完全重写版，强制使用实时数据
-# ============================================================================
+def fetch_economic_calendar(signals=None, rates=None):
+    """主函数：获取财经日历"""
+    # 获取原始事件
+    events = fetch_calendar_forex_factory()
+    
+    # 为重要事件添加AI分析，传入实时数据
+    if signals is not None and rates is not None:
+        events_with_ai = add_ai_analysis_to_events(events, signals, rates)
+    else:
+        events_with_ai = add_ai_analysis_to_events(events)
+    
+    return events_with_ai
+
 def generate_ai_analysis_with_real_time_data(signals, rates, events):
     """生成基于实时数据的AI分析 - 强制AI使用实时价格"""
     if not config.enable_ai:
@@ -655,49 +856,6 @@ def generate_ai_analysis_with_real_time_data(signals, rates, events):
     # 失败时返回包含实时价格的默认分析
     return get_default_analysis_with_fallback_prices(signals, rates)
 
-def get_real_time_price_by_pair(pair, signals, rates):
-    """获取特定货币对的实时价格"""
-    # 优先从rates获取
-    if pair in rates:
-        price = rates[pair].get('rate')
-        if price and price > 0:
-            return price
-    
-    # 从signals获取
-    for signal in signals:
-        if signal.get('pair') == pair:
-            price = signal.get('last_price')
-            if price and price > 0:
-                return price
-    
-    return None
-
-def get_price_for_pair(pair, signals, rates):
-    """获取价格字符串"""
-    price = get_real_time_price_by_pair(pair, signals, rates)
-    if price:
-        return format_price(pair, price)
-    return "价格获取中"
-
-def format_price(pair, price):
-    """格式化价格显示"""
-    if not price or price == 0:
-        return "N/A"
-    
-    try:
-        price_num = float(price)
-        if pair in ['XAUUSD', 'XAGUSD']:
-            return f"{price_num:.2f}"
-        elif pair == 'BTCUSD':
-            return f"{int(price_num)}"
-        else:
-            if price_num < 10:
-                return f"{price_num:.5f}"
-            else:
-                return f"{price_num:.4f}"
-    except:
-        return str(price)
-
 def parse_ai_content_to_sections(ai_content):
     """解析AI内容到各个章节"""
     sections = {
@@ -785,16 +943,6 @@ def validate_and_enhance_sections(sections, price_details):
     
     return sections
 
-def get_section_name(section_key):
-    """获取章节名称"""
-    names = {
-        "market": "市场概况",
-        "events": "事件分析",
-        "outlook": "交易展望",
-        "risks": "风险提示"
-    }
-    return names.get(section_key, "分析")
-
 def get_default_analysis_with_fallback_prices(signals, rates):
     """获取包含实时价格的默认分析"""
     # 收集实时价格
@@ -819,70 +967,6 @@ def get_default_analysis_with_fallback_prices(signals, rates):
         "has_real_time_data": len(real_prices) > 0,
         "price_count": len(real_prices)
     }
-
-def generate_ai_analysis_for_event(event):
-    """为单个事件生成AI分析"""
-    if not config.enable_ai:
-        return "【AI分析】AI分析功能当前已禁用"
-    
-    api_key = config.openai_api_key.strip()
-    if not api_key or len(api_key) < 30:
-        return "【AI分析】API密钥配置无效"
-    
-    try:
-        # 构建提示词
-        prompt = f"""你是一位专业的宏观外汇分析师。请基于以下经济事件，生成简要的AI分析：
-
-事件信息：
-- 国家：{event.get('country', '未知')}
-- 事件：{event.get('name', '未知事件')}
-- 时间：{event.get('date', '')} {event.get('time', '')}（北京时间）
-- 预测值：{event.get('forecast', 'N/A')}
-- 前值：{event.get('previous', 'N/A')}
-- 重要性：{event.get('importance', 1)}级
-
-请用中文分析：
-1. 该事件对相关货币的可能影响
-2. 市场预期与实际情况的对比
-3. 1-2条具体的交易建议（方向、入场区域、止损）
-
-请控制在150字以内，直接给出分析，不要多余说明。"""
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        request_body = {
-            "model": "gpt-3.5-turbo",
-            "messages": [
-                {"role": "system", "content": "你是一位经验丰富的外汇宏观交易员，擅长给出清晰、直接、可执行的交易分析。"},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 300,
-            "temperature": 0.4
-        }
-
-        response = requests.post(
-            f"{config.openai_base_url}/chat/completions",
-            headers=headers,
-            json=request_body,
-            timeout=30
-        )
-
-        if response.status_code == 200:
-            result = response.json()
-            if 'choices' in result and len(result['choices']) > 0:
-                ai_content = result['choices'][0]['message']['content']
-                return f"【AI分析】{ai_content}"
-        else:
-            logger.warning(f"AI分析请求失败: {response.status_code}")
-            return "【AI分析】数据更新中..."
-            
-    except Exception as e:
-        logger.error(f"生成AI分析时出错: {e}")
-    
-    return "【AI分析】分析生成中..."
 
 # ============================================================================
 # 新增：货币对摘要生成函数
@@ -957,23 +1041,16 @@ def execute_data_update():
         logger.info("阶段1/4: 获取市场信号...")
         signals = fetch_market_signals_ziwox()
         
-        # 记录获取到的实时价格
-        for signal in signals:
-            pair = signal.get('pair', '')
-            price = signal.get('last_price', 0)
-            if pair and price > 0:
-                logger.info(f"  实时价格: {pair} = {price}")
-
         # 2. 获取实时汇率数据
         logger.info("阶段2/4: 获取实时汇率...")
         rates = fetch_forex_rates_alpha_vantage(signals)
 
-        # 3. 获取财经日历数据
-        logger.info("阶段3/4: 获取财经日历...")
-        events = fetch_economic_calendar()
+        # 3. 获取财经日历数据（传入实时数据）
+        logger.info("阶段3/4: 获取财经日历（带实时AI分析）...")
+        events = fetch_economic_calendar(signals, rates)
 
-        # 4. 生成基于实时数据的AI分析
-        logger.info("阶段4/4: 生成基于实时数据的AI分析...")
+        # 4. 生成综合AI分析（分章节）
+        logger.info("阶段4/4: 生成综合AI分析（分章节）...")
         analysis_result = generate_ai_analysis_with_real_time_data(signals, rates, events)
         
         sections = analysis_result.get("sections", {})
@@ -988,7 +1065,7 @@ def execute_data_update():
         logger.info(f"数据更新成功完成:")
         logger.info(f"  - 市场信号: {len(signals)} 个")
         logger.info(f"  - 汇率数据: {len(rates)} 个")
-        logger.info(f"  - 财经日历: {len(events)} 个")
+        logger.info(f"  - 财经日历: {len(events)} 个（带实时AI分析）")
         logger.info(f"  - AI分析章节: {len(sections)} 个")
         logger.info(f"  - 货币对摘要: {len(currency_pairs_summary)} 个")
         logger.info("="*60)
@@ -1103,13 +1180,29 @@ def refresh_data():
 
 @app.route('/api/events/today')
 def get_today_events():
-    """获取今日事件"""
+    """获取今日事件 - 确保有实时AI分析"""
     events = store.economic_events
     
     # 如果没有数据且不在更新中，执行一次更新
     if not events and not store.is_updating:
         success = execute_data_update()
         events = store.economic_events if success else []
+    
+    # 检查事件是否有实时AI分析
+    needs_real_time_analysis = False
+    for event in events:
+        if 'ai_analysis' not in event or "分析生成中" in event.get('ai_analysis', ''):
+            needs_real_time_analysis = True
+            break
+    
+    # 如果需要实时分析，尝试重新生成
+    if needs_real_time_analysis and store.market_signals and store.forex_rates:
+        try:
+            logger.info("事件缺少实时AI分析，尝试重新生成...")
+            events = add_ai_analysis_to_events(events, store.market_signals, store.forex_rates)
+            store.economic_events = events
+        except Exception as e:
+            logger.error(f"重新生成事件AI分析失败: {e}")
     
     # 确保每个事件都有ai_analysis字段
     for event in events:
@@ -1134,7 +1227,7 @@ def get_today_events():
         },
         "generated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(),
         "timezone": "北京时间 (UTC+8)",
-        "note": "事件已按日期时间排序"
+        "note": "事件AI分析基于实时价格数据"
     })
 
 @app.route('/api/summary')
