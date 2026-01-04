@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 import requests
 from alpha_vantage.foreignexchange import ForeignExchange
 from bs4 import BeautifulSoup
@@ -143,8 +144,8 @@ class Config:
             'crypto': ['BTCUSD']
         }
         
-        # AI分析生成时间（北京时间）
-        self.ai_generate_hours = [5, 9, 15, 23]  # 5:00, 9:00, 15:00, 23:00
+        # AI分析生成时间（北京时间） - 修复版：明确指定
+        self.ai_generate_hours_beijing = [5, 9, 15, 23]  # 北京时间 5:00, 9:00, 15:00, 23:00
 
 config = Config()
 
@@ -169,6 +170,7 @@ class DataStore:
         }
         self.currency_pairs_summary = []  # 货币对摘要信息
         self.last_ai_generated = None     # 上次AI生成时间
+        self.ai_update_count = 0          # AI更新计数器，用于调试
 
     def update_all(self, signals, rates, events, analysis, summary_sections=None, individual_analysis=None, currency_pairs_summary=None):
         self.market_signals = signals
@@ -195,6 +197,8 @@ class DataStore:
     def set_ai_generated_time(self):
         """设置AI分析生成时间"""
         self.last_ai_generated = datetime.now()
+        self.ai_update_count += 1
+        logger.info(f"AI分析已生成，总生成次数: {self.ai_update_count}")
 
 store = DataStore()
 
@@ -671,7 +675,7 @@ def match_and_update_actual_values(events, actual_values_map):
     
     return updated_count
 
-def fetch_economic_calendar(signals=None, rates=None):
+def fetch_economic_calendar(signals=None, rates=None, generate_event_ai=False):
     """获取财经日历"""
     # 获取原始事件
     events = fetch_calendar_forex_factory()
@@ -683,11 +687,15 @@ def fetch_economic_calendar(signals=None, rates=None):
             updated_count = match_and_update_actual_values(events, actual_values_map)
             logger.info(f"成功更新 {updated_count} 个事件的实际值")
     
-    # 为重要事件添加AI分析
-    if signals is not None and rates is not None:
+    # 只为重要事件添加AI分析（仅在需要时生成）
+    if generate_event_ai and config.enable_ai:
         events_with_ai = add_ai_analysis_to_events(events, signals, rates)
     else:
-        events_with_ai = add_ai_analysis_to_events(events)
+        events_with_ai = events
+        # 如果没有生成AI分析，确保每个事件都有ai_analysis字段
+        for event in events_with_ai:
+            if 'ai_analysis' not in event:
+                event['ai_analysis'] = "【AI分析】等待AI分析生成..."
     
     return events_with_ai
 
@@ -1324,7 +1332,7 @@ def validate_and_fix_sections(sections, original_content=None):
                     "outlook": "【货币对展望】基于实时价格水平，主要货币对呈现不同的技术形态。黄金、白银等贵金属价格走势需要特别关注突破方向。",
                     "risks": "【风险提示】当前市场存在数据发布风险和流动性变化。建议交易者控制仓位，设置合理止损，密切关注市场情绪变化。"
                 }
-                sections[section_name] = default_content.get(section_name, "AI分析内容生成中...")
+                sections[section_name] = default_content.get(section_name, "等待AI分析生成...")
     
     return sections
 
@@ -1389,7 +1397,7 @@ def generate_currency_pairs_summary(signals, rates):
     return currency_pairs_summary
 
 # ============================================================================
-# 核心数据更新函数 - 简化版
+# 核心数据更新函数 - 修复版
 # ============================================================================
 def execute_data_update(generate_ai=False):
     """执行数据更新的核心逻辑"""
@@ -1406,9 +1414,9 @@ def execute_data_update(generate_ai=False):
         logger.info("阶段2/4: 获取实时汇率...")
         rates = fetch_forex_rates_alpha_vantage(signals)
 
-        # 3. 获取财经日历数据
+        # 3. 获取财经日历数据 - 只在生成AI分析时才生成事件AI分析
         logger.info("阶段3/4: 获取财经日历...")
-        events = fetch_economic_calendar(signals, rates)
+        events = fetch_economic_calendar(signals, rates, generate_event_ai=generate_ai)
 
         # 4. 生成综合AI分析（分章节）- 只在需要时生成
         sections = {}
@@ -1473,7 +1481,7 @@ def background_data_update(generate_ai=False):
         store.set_updating(False, str(e))
 
 # ============================================================================
-# 定时任务调度 - 完全分离版
+# 定时任务调度 - 修复版（正确时区转换）
 # ============================================================================
 scheduler = BackgroundScheduler()
 
@@ -1509,23 +1517,30 @@ scheduler.add_job(
 )
 
 # 特定时间触发AI分析（北京时间）
-# 转换为UTC时间
-ai_schedule_times = [
-    (21, 0),  # 5:00 北京时间
-    (1, 0),   # 9:00 北京时间
-    (7, 0),   # 15:00 北京时间
-    (15, 0),  # 23:00 北京时间
+# 修复时区转换：北京时间(UTC+8) -> UTC = 北京时间 - 8小时
+# 注意：APScheduler使用UTC时间
+ai_schedule_times_utc = [
+    (21, 0),  # 北京时间5:00 -> UTC 21:00 (前一天的21点)
+    (1, 0),   # 北京时间9:00 -> UTC 1:00
+    (7, 0),   # 北京时间15:00 -> UTC 7:00
+    (15, 0),  # 北京时间23:00 -> UTC 15:00
 ]
 
-for i, (utc_hour, utc_minute) in enumerate(ai_schedule_times):
+for i, (utc_hour, utc_minute) in enumerate(ai_schedule_times_utc):
     scheduler.add_job(
-        scheduled_ai_analysis_update,  # 使用专门的AI更新函数
+        scheduled_ai_analysis_update,
         'cron',
         hour=utc_hour,
         minute=utc_minute,
         id=f'ai_update_{i}',
-        name=f'AI分析更新（北京时间 {config.ai_generate_hours[i]}:00）'
+        name=f'AI分析更新（北京时间 {config.ai_generate_hours_beijing[i]}:00 -> UTC {utc_hour}:{utc_minute:02d}）'
     )
+
+# 记录定时任务信息
+logger.info(f"AI分析定时任务设置:")
+for i, beijing_hour in enumerate(config.ai_generate_hours_beijing):
+    utc_hour, utc_minute = ai_schedule_times_utc[i]
+    logger.info(f"  北京时间 {beijing_hour}:00 -> UTC {utc_hour}:{utc_minute:02d}")
 
 scheduler.start()
 
@@ -1537,7 +1552,7 @@ def index():
     return jsonify({
         "status": "running",
         "service": "宏观经济AI分析工具（实时版）",
-        "version": "6.2",
+        "version": "7.0",
         "data_sources": {
             "market_signals": "Ziwox",
             "forex_rates": "Alpha Vantage + Ziwox补充",
@@ -1546,7 +1561,8 @@ def index():
         },
         "special_pairs": ["XAU/USD (黄金)", "XAG/USD (白银)", "BTC/USD (比特币)"],
         "timezone": "北京时间 (UTC+8)",
-        "ai_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours])}",
+        "ai_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours_beijing])}",
+        "ai_update_count": store.ai_update_count,
         "update_status": {
             "is_updating": store.is_updating,
             "last_updated": store.last_updated.isoformat() if store.last_updated else None,
@@ -1562,7 +1578,7 @@ def get_api_status():
     next_ai_hour = None
     
     # 找到下一个AI生成时间
-    for hour in sorted(config.ai_generate_hours):
+    for hour in sorted(config.ai_generate_hours_beijing):
         if hour > current_hour:
             next_ai_hour = hour
             break
@@ -1572,8 +1588,9 @@ def get_api_status():
         "ai_enabled": config.enable_ai,
         "ai_model": "gpt-5.2",
         "timezone": "北京时间 (UTC+8)",
-        "ai_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours])}",
+        "ai_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours_beijing])}",
         "next_ai_generation": f"{next_ai_hour}:00" if next_ai_hour else "今天已完成",
+        "ai_update_count": store.ai_update_count,
         "update_status": {
             "is_updating": store.is_updating,
             "last_updated": store.last_updated.isoformat() if store.last_updated else None,
@@ -1603,7 +1620,7 @@ def refresh_data():
         return jsonify({
             "status": "success",
             "message": "数据刷新任务已在后台启动（不生成AI分析）",
-            "note": "AI分析将在指定时间自动生成：5:00, 9:00, 15:00, 23:00"
+            "note": "AI分析将在指定时间自动生成：5:00, 9:00, 15:00, 23:00（北京时间）"
         })
     except Exception as e:
         logger.error(f"刷新请求处理出错: {e}")
@@ -1625,7 +1642,7 @@ def get_today_events():
     # 确保每个事件都有ai_analysis字段
     for event in events:
         if 'ai_analysis' not in event:
-            event['ai_analysis'] = "【AI分析】分析生成中..."
+            event['ai_analysis'] = "【AI分析】等待AI分析生成..."
     
     # 统计信息
     total_events = len(events)
@@ -1678,8 +1695,9 @@ def get_today_summary():
         "generated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(),
         "ai_enabled": config.enable_ai,
         "ai_model": "gpt-5.2",
-        "ai_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours])}",
+        "ai_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours_beijing])}",
         "last_ai_generated": store.last_ai_generated.isoformat() if store.last_ai_generated else None,
+        "ai_update_count": store.ai_update_count,
         "timezone": "北京时间 (UTC+8)",
         "note": "分析基于最新实时行情数据，AI分析在指定时间自动生成"
     })
@@ -1773,7 +1791,42 @@ def get_overview():
             "has_real_analysis": has_real_ai,
             "sections_count": len(store.summary_sections) if store.summary_sections else 0,
             "last_generated": store.last_ai_generated.isoformat() if store.last_ai_generated else "从未生成",
-            "next_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours])}"
+            "ai_update_count": store.ai_update_count,
+            "next_schedule": f"{', '.join([f'{h}:00' for h in config.ai_generate_hours_beijing])}"
+        }
+    })
+
+# ============================================================================
+# 调试路由
+# ============================================================================
+@app.route('/api/debug/schedule')
+def debug_schedule():
+    """调试路由：查看当前定时任务状态"""
+    jobs = scheduler.get_jobs()
+    job_list = []
+    
+    for job in jobs:
+        job_list.append({
+            "id": job.id,
+            "name": job.name,
+            "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+            "trigger": str(job.trigger)
+        })
+    
+    beijing_now = datetime.now(timezone(timedelta(hours=8)))
+    
+    return jsonify({
+        "current_time": {
+            "utc": datetime.now(timezone.utc).isoformat(),
+            "beijing": beijing_now.isoformat(),
+            "beijing_hour": beijing_now.hour
+        },
+        "ai_schedule_beijing": config.ai_generate_hours_beijing,
+        "ai_update_count": store.ai_update_count,
+        "jobs": job_list,
+        "store_status": {
+            "is_updating": store.is_updating,
+            "last_ai_generated": store.last_ai_generated.isoformat() if store.last_ai_generated else None
         }
     })
 
@@ -1782,12 +1835,12 @@ def get_overview():
 # ============================================================================
 if __name__ == '__main__':
     logger.info("="*60)
-    logger.info("启动宏观经济AI分析工具（实时数据版）v6.2")
+    logger.info("启动宏观经济AI分析工具（实时数据版）v7.0")
     logger.info(f"财经日历源: Forex Factory JSON API + 网页抓取")
     logger.info(f"AI分析服务: laozhang.ai（gpt-5.2模型）")
     logger.info(f"特殊品种: XAU/USD (黄金), XAG/USD (白银), BTC/USD (比特币)")
     logger.info(f"时区: 北京时间 (UTC+8)")
-    logger.info(f"AI分析时间: {', '.join([f'{h}:00' for h in config.ai_generate_hours])}")
+    logger.info(f"AI分析时间（北京时间）: {', '.join([f'{h}:00' for h in config.ai_generate_hours_beijing])}")
     logger.info(f"基础数据更新: 每30分钟（不生成AI分析）")
     logger.info(f"手动刷新: 只更新数据，不生成AI分析")
     logger.info("注意: AI分析只在指定时间自动生成以节省API调用")
@@ -1804,6 +1857,7 @@ if __name__ == '__main__':
             logger.info(f"事件总数: {len(events)}")
             logger.info(f"货币对摘要数: {len(currency_pairs)}")
             logger.info(f"AI分析生成: {'成功' if store.last_ai_generated else '失败'}")
+            logger.info(f"AI更新次数: {store.ai_update_count}")
         else:
             logger.warning("初始数据获取失败，但服务已启动")
     except Exception as e:
