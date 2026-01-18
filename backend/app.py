@@ -48,7 +48,7 @@ class Config:
         self.enable_ai = os.getenv("ENABLE_AI", "true").lower() == "true"
 
         # 监控的货币对 - 更新版
-        # Alpha Vantage (5个核心货币对)
+        # Alpha Vantage (5个核心货币对，但BTCUSD需要特殊处理)
         self.av_currency_pairs = ['BTCUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF']
         # Swissquote (黄金、白银和其他货币对)
         self.sq_currency_pairs = ['XAUUSD', 'XAGUSD', 'USDCNH', 'AUDUSD', 'NZDUSD', 'USDCAD']
@@ -234,10 +234,6 @@ def fetch_rates_swissquote():
         'NZDUSD': 'NZD/USD',       # 新西兰元/美元
         'USDCAD': 'USD/CAD',       # 美元/加元
         # 如果需要更多货币对，可以继续添加
-        # 'EURUSD': 'EUR/USD',     # 欧元/美元 (如果需要也可以从Swissquote获取)
-        # 'GBPUSD': 'GBP/USD',     # 英镑/美元
-        # 'USDJPY': 'USD/JPY',     # 美元/日元
-        # 'USDCHF': 'USD/CHF',     # 美元/瑞郎
     }
     
     for pair, instrument in sq_pairs_mapping.items():
@@ -304,10 +300,10 @@ def fetch_rates_swissquote():
     return rates
 
 def fetch_forex_rates_alpha_vantage():
-    """从Alpha Vantage获取实时汇率（只获取5个核心货币对）"""
+    """从Alpha Vantage获取实时汇率（只获取5个核心货币对，BTCUSD特殊处理）"""
     rates = {}
     
-    # 只获取5个核心货币对
+    # 只获取5个核心货币对，但BTCUSD需要特殊处理
     av_pairs = config.av_currency_pairs  # ['BTCUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF']
     
     if config.alpha_vantage_key:
@@ -322,6 +318,41 @@ def fetch_forex_rates_alpha_vantage():
                         logger.info(f"  等待 {delay:.1f} 秒以避免API限制...")
                         time.sleep(delay)
                     
+                    # 特殊处理BTCUSD
+                    if pair == 'BTCUSD':
+                        # 尝试使用数字货币API端点
+                        try:
+                            logger.info(f"   特殊处理BTCUSD...")
+                            # Alpha Vantage的数字货币端点
+                            url = f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=BTC&to_currency=USD&apikey={config.alpha_vantage_key}"
+                            response = requests.get(url, timeout=15)
+                            
+                            if response.status_code == 200:
+                                data = response.json()
+                                if 'Realtime Currency Exchange Rate' in data:
+                                    rate_data = data['Realtime Currency Exchange Rate']
+                                    
+                                    rates[pair] = {
+                                        'rate': float(rate_data.get('5. Exchange Rate', 0)),
+                                        'bid': rate_data.get('8. Bid Price', rate_data.get('5. Exchange Rate')),
+                                        'ask': rate_data.get('9. Ask Price', rate_data.get('5. Exchange Rate')),
+                                        'last_refreshed': rate_data.get('6. Last Refreshed', datetime.now().isoformat()),
+                                        'source': 'Alpha Vantage (Digital Currency)'
+                                    }
+                                    logger.info(f"    ✓ Alpha Vantage 成功获取 BTCUSD: {rates[pair]['rate']}")
+                                else:
+                                    logger.warning(f"    Alpha Vantage BTCUSD 返回数据格式异常: {data}")
+                            else:
+                                logger.warning(f"    Alpha Vantage BTCUSD 请求失败，状态码: {response.status_code}")
+                                
+                            # 无论成功与否，继续下一个货币对
+                            continue
+                                
+                        except Exception as btc_error:
+                            logger.warning(f"    Alpha Vantage BTCUSD 特殊处理失败: {str(btc_error)[:100]}")
+                            # 继续尝试使用标准外汇API
+                    
+                    # 标准外汇货币对处理
                     if pair in config.av_special_pairs:
                         from_cur, to_cur = config.av_special_pairs[pair]
                     else:
@@ -356,14 +387,47 @@ def fetch_forex_rates_alpha_vantage():
     sq_rates = fetch_rates_swissquote()
     rates.update(sq_rates)
     
+    # 如果BTCUSD仍然没有获取到，尝试备用方案
+    if 'BTCUSD' not in rates or rates['BTCUSD'].get('rate', 0) == 0:
+        logger.info("尝试备用方案获取BTCUSD价格...")
+        try:
+            # 尝试从CoinGecko获取比特币价格
+            url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'bitcoin' in data and 'usd' in data['bitcoin']:
+                    btc_price = data['bitcoin']['usd']
+                    rates['BTCUSD'] = {
+                        'rate': btc_price,
+                        'bid': btc_price * 0.999,
+                        'ask': btc_price * 1.001,
+                        'last_refreshed': datetime.now().isoformat(),
+                        'source': 'CoinGecko (备用)'
+                    }
+                    logger.info(f"    ✓ CoinGecko 成功获取 BTCUSD: {btc_price}")
+        except Exception as e:
+            logger.warning(f"    备用方案获取BTCUSD失败: {str(e)}")
+    
     # 检查是否所有监控的货币对都有数据
     for pair in config.watch_currency_pairs:
         if pair not in rates:
             logger.warning(f"    {pair} 没有获取到任何数据")
     
     logger.info(f"汇率获取完成，共得到 {len(rates)} 个品种数据")
-    logger.info(f"Alpha Vantage获取: {[p for p in rates.keys() if rates[p].get('source') == 'Alpha Vantage']}")
-    logger.info(f"Swissquote获取: {[p for p in rates.keys() if rates[p].get('source') == 'Swissquote']}")
+    
+    # 记录每个货币对的数据源
+    av_pairs = [p for p in rates.keys() if rates[p].get('source', '').startswith('Alpha Vantage')]
+    sq_pairs = [p for p in rates.keys() if rates[p].get('source') == 'Swissquote']
+    other_pairs = [p for p in rates.keys() if p not in av_pairs + sq_pairs]
+    
+    if av_pairs:
+        logger.info(f"Alpha Vantage获取: {av_pairs}")
+    if sq_pairs:
+        logger.info(f"Swissquote获取: {sq_pairs}")
+    if other_pairs:
+        logger.info(f"其他来源获取: {other_pairs}")
+    
     return rates
 
 # ============================================================================
@@ -1458,7 +1522,7 @@ def scheduled_ai_analysis_update():
     
     logger.info("="*40)
     logger.info("定时任务触发AI分析更新（生成AI分析）")
-    logger.info("更新时间: " + datetime.now().strftime('%Y-%m-d %H:%M:%S'))
+    logger.info("更新时间: " + datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     
     success = execute_data_update(generate_ai=True)  # 明确生成AI
     if not success:
@@ -1512,7 +1576,7 @@ def index():
     return jsonify({
         "status": "running",
         "service": "宏观经济AI分析工具（实时版）",
-        "version": "7.5",
+        "version": "7.6",
         "data_sources": {
             "market_signals": "已弃用",
             "alpha_vantage": "BTCUSD, EURUSD, GBPUSD, USDJPY, USDCHF (5个核心货币对)",
@@ -1520,6 +1584,7 @@ def index():
             "economic_calendar": "Forex Factory JSON API + 网页抓取",
             "ai_analysis": "laozhang.ai（gpt-5.2模型）"
         },
+        "btc_backup": "CoinGecko API (BTCUSD备用)",
         "currency_pairs": {
             "total": len(config.watch_currency_pairs),
             "alpha_vantage": config.av_currency_pairs,
@@ -1707,7 +1772,7 @@ def get_market_signals():
         "special_pairs": [
             {"pair": "XAUUSD", "name": "黄金/美元", "type": "贵金属", "source": "Swissquote"},
             {"pair": "XAGUSD", "name": "白银/美元", "type": "贵金属", "source": "Swissquote"},
-            {"pair": "BTCUSD", "name": "比特币/美元", "type": "加密货币", "source": "Alpha Vantage"}
+            {"pair": "BTCUSD", "name": "比特币/美元", "type": "加密货币", "source": "Alpha Vantage/CoinGecko"}
         ]
     })
 
@@ -1826,11 +1891,12 @@ def debug_schedule():
 # ============================================================================
 if __name__ == '__main__':
     logger.info("="*60)
-    logger.info("启动宏观经济AI分析工具（实时数据版）v7.5")
+    logger.info("启动宏观经济AI分析工具（实时数据版）v7.6")
     logger.info(f"财经日历源: Forex Factory JSON API + 网页抓取")
     logger.info(f"AI分析服务: laozhang.ai（gpt-5.2模型）")
     logger.info(f"Alpha Vantage数据源: {config.av_currency_pairs} (5个核心货币对)")
     logger.info(f"Swissquote数据源: {config.sq_currency_pairs} (黄金白银及其他货币对)")
+    logger.info(f"比特币备用数据源: CoinGecko API")
     logger.info(f"时区: 北京时间 (UTC+8)")
     logger.info(f"AI分析时间（北京时间）: {', '.join([f'{h}:00' for h in config.ai_generate_hours_beijing])}")
     logger.info(f"基础数据更新: 每30分钟（更新实时数据，不生成AI分析）")
