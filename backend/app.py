@@ -562,9 +562,30 @@ def parse_forex_factory_events(raw_events):
             continue
     
     # 按日期和时间排序（从今天最近的时间开始）
-    events.sort(key=lambda x: (x["date"], x["time"]))
+    events.sort(key=lambda x: (x[“date”], x[“time”]))
+
+    # --- 修复方案：智能筛选而非硬性截断 ---
+    # 目标：尽可能保留未来一周的事件，但控制总数，并优先保留高重要性事件。
     
-    return events[:50]  # 限制最多50个事件
+    # 1. 首先，区分高重要性事件（importance >= 2）和普通事件
+    important_events = [e for e in events if e.get(‘importance‘, 1) >= 2]
+    other_events = [e for e in events if e.get(‘importance‘, 1) < 2]
+    
+    # 2. 优先保证所有高重要性事件都能被展示
+    selected_events = important_events
+    
+    # 3. 从普通事件中补充，直到达到总数量上限（例如100条），确保时间覆盖
+    # 计算剩余名额
+    remaining_slots = 100 - len(selected_events)
+    if remaining_slots > 0 and other_events:
+        # 可以按顺序取，也可以随机取样，这里按顺序取以保持时间连续性
+        selected_events.extend(other_events[:remaining_slots])
+    
+    # 4. 最后，按时间重新排序，确保最终列表井然有序
+    selected_events.sort(key=lambda x: (x[“date”], x[“time”]))
+    
+    logger.info(f”事件筛选完成：原始{len(events)}条，重要事件{len(important_events)}条，最终返回{len(selected_events)}条。“)
+    return selected_events
 
 def scrape_actual_values_from_forexfactory():
     """从Forex Factory网页抓取实际值"""
