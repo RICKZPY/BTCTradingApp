@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>宏观经济AI分析工具 - Web演示版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: #1a237e;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            background: #f5f5f5;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .status-item {
+            display: inline-block;
+            margin-right: 20px;
+            font-size: 14px;
+        }
+        
+        .content {
+            padding: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .error {
+            text-align: center;
+            padding: 40px;
+            color: #e74c3c;
+        }
+        
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .tab.active {
+            color: #1a237e;
+            border-bottom-color: #1a237e;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .event-item {
+            border: 1px solid #eee;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            padding: 16px;
+            transition: all 0.3s;
+        }
+        
+        .event-item:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .event-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .event-time {
+            font-weight: bold;
+            color: #1a237e;
+        }
+        
+        .event-country {
+            font-size: 18px;
+        }
+        
+        .event-name {
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        .event-data {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 8px;
+            font-size: 14px;
+        }
+        
+        .data-item {
+            background: #f8f9fa;
+            padding: 6px 8px;
+            border-radius: 4px;
+        }
+        
+        .data-label {
+            font-weight: 500;
+            color: #666;
+        }
+        
+        .importance-high { border-left: 4px solid #e74c3c; }
+        .importance-medium { border-left: 4px solid #f39c12; }
+        .importance-low { border-left: 4px solid #27ae60; }
+        
+        .refresh-btn {
+            background: #1a237e;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .refresh-btn:hover {
+            background: #303f9f;
+        }
+        
+        .refresh-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .summary-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .summary-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #1a237e;
+        }
+        
+        .currency-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        
+        .currency-item {
+            background: white;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .currency-icon {
+            font-size: 20px;
+            margin-bottom: 4px;
+        }
+        
+        .currency-name {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .currency-price {
+            font-weight: bold;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌍 宏观经济AI分析工具</h1>
+            <p>实时外汇市场数据与AI智能分析</p>
+        </div>
+        
+        <div class="status">
+            <div class="status-item">
+                <strong>服务状态:</strong> <span id="serverStatus">检查中...</span>
+            </div>
+            <div class="status-item">
+                <strong>最后更新:</strong> <span id="lastUpdate">--</span>
+            </div>
+            <div class="status-item">
+                <strong>事件数量:</strong> <span id="eventCount">--</span>
+            </div>
+            <div class="status-item">
+                <button class="refresh-btn" onclick="refreshData()" id="refreshBtn">刷新数据</button>
+            </div>
+        </div>
+        
+        <div class="content">
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('events')">📅 今日事件</div>
+                <div class="tab" onclick="switchTab('summary')">📊 AI总结</div>
+                <div class="tab" onclick="switchTab('rates')">💱 实时汇率</div>
+            </div>
+            
+            <div id="loading" class="loading">
+                <p>🔄 正在加载数据...</p>
+            </div>
+            
+            <div id="error" class="error" style="display: none;">
+                <p>❌ 数据加载失败，请检查后端服务是否正常运行</p>
+                <p>后端地址: <code>http://localhost:5001</code></p>
+            </div>
+            
+            <div id="events-tab" class="tab-content active">
+                <div id="events-container"></div>
+            </div>
+            
+            <div id="summary-tab" class="tab-content">
+                <div id="summary-container"></div>
+            </div>
+            
+            <div id="rates-tab" class="tab-content">
+                <div id="rates-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5001';
+        let currentData = {};
+        
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAllData();
+            
+            // 每30秒自动刷新
+            setInterval(loadAllData, 30000);
+        });
+        
+        // 加载所有数据
+        async function loadAllData() {
+            try {
+                showLoading();
+                
+                // 并行请求所有数据
+                const [statusRes, eventsRes, summaryRes] = await Promise.all([
+                    fetch(`${API_BASE}/api/status`).then(r => r.json()),
+                    fetch(`${API_BASE}/api/events/today`).then(r => r.json()),
+                    fetch(`${API_BASE}/api/summary`).then(r => r.json())
+                ]);
+                
+                currentData = { status: statusRes, events: eventsRes, summary: summaryRes };
+                
+                updateStatus(statusRes);
+                renderEvents(eventsRes);
+                renderSummary(summaryRes);
+                renderRates(summaryRes.currency_pairs || []);
+                
+                hideLoading();
+                
+            } catch (error) {
+                console.error('加载数据失败:', error);
+                showError();
+            }
+        }
+        
+        // 刷新数据
+        async function refreshData() {
+            const btn = document.getElementById('refreshBtn');
+            btn.disabled = true;
+            btn.textContent = '刷新中...';
+            
+            try {
+                // 触发后端刷新
+                await fetch(`${API_BASE}/api/refresh`, { method: 'POST' });
+                
+                // 等待2秒后重新加载数据
+                setTimeout(async () => {
+                    await loadAllData();
+                    btn.disabled = false;
+                    btn.textContent = '刷新数据';
+                }, 2000);
+                
+            } catch (error) {
+                console.error('刷新失败:', error);
+                btn.disabled = false;
+                btn.textContent = '刷新数据';
+            }
+        }
+        
+        // 切换标签页
+        function switchTab(tabName) {
+            // 更新标签状态
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+        
+        // 更新状态栏
+        function updateStatus(status) {
+            document.getElementById('serverStatus').textContent = status.status === 'healthy' ? '✅ 正常' : '❌ 异常';
+            document.getElementById('lastUpdate').textContent = status.update_status?.last_updated ? 
+                new Date(status.update_status.last_updated).toLocaleString() : '--';
+        }
+        
+        // 渲染事件列表
+        function renderEvents(eventsData) {
+            const container = document.getElementById('events-container');
+            const events = eventsData.data || [];
+            
+            document.getElementById('eventCount').textContent = events.length;
+            
+            if (events.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">暂无事件数据</p>';
+                return;
+            }
+            
+            const html = events.map(event => `
+                <div class="event-item importance-${getImportanceClass(event.importance)}">
+                    <div class="event-header">
+                        <div class="event-time">${event.time}</div>
+                        <div class="event-country">${getCountryFlag(event.country)}</div>
+                    </div>
+                    <div class="event-name">${event.name}</div>
+                    <div class="event-data">
+                        <div class="data-item">
+                            <div class="data-label">预测值</div>
+                            <div>${event.forecast || 'N/A'}</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="data-label">前值</div>
+                            <div>${event.previous || 'N/A'}</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="data-label">实际值</div>
+                            <div>${event.actual || '待公布'}</div>
+                        </div>
+                        <div class="data-item">
+                            <div class="data-label">重要性</div>
+                            <div>${getImportanceText(event.importance)}</div>
+                        </div>
+                    </div>
+                    ${event.ai_analysis ? `
+                        <div style="margin-top: 12px; padding: 12px; background: #f0f8ff; border-radius: 6px; font-size: 14px;">
+                            <strong>🤖 AI分析:</strong><br>
+                            ${event.ai_analysis.replace(/【AI分析】/, '')}
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+            
+            container.innerHTML = html;
+        }
+        
+        // 渲染AI总结
+        function renderSummary(summaryData) {
+            const container = document.getElementById('summary-container');
+            const sections = summaryData.sections || {};
+            
+            const html = Object.entries(sections).map(([key, content]) => `
+                <div class="summary-section">
+                    <div class="summary-title">${getSectionTitle(key)}</div>
+                    <div>${content}</div>
+                </div>
+            `).join('');
+            
+            container.innerHTML = html || '<p style="text-align: center; color: #666; padding: 40px;">暂无AI分析数据</p>';
+        }
+        
+        // 渲染实时汇率
+        function renderRates(currencyPairs) {
+            const container = document.getElementById('rates-container');
+            
+            if (!currencyPairs || currencyPairs.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">暂无汇率数据</p>';
+                return;
+            }
+            
+            const html = `
+                <div class="currency-grid">
+                    ${currencyPairs.map(pair => `
+                        <div class="currency-item">
+                            <div class="currency-icon">${pair.icon || '💱'}</div>
+                            <div class="currency-name">${pair.name}</div>
+                            <div class="currency-price">${pair.price}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            
+            container.innerHTML = html;
+        }
+        
+        // 工具函数
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        function showError() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+        }
+        
+        function getImportanceClass(level) {
+            switch(level) {
+                case 3: return 'high';
+                case 2: return 'medium';
+                case 1: return 'low';
+                default: return 'low';
+            }
+        }
+        
+        function getImportanceText(level) {
+            switch(level) {
+                case 3: return '🔥 高';
+                case 2: return '⚠️ 中';
+                case 1: return '📊 低';
+                default: return '未知';
+            }
+        }
+        
+        function getCountryFlag(country) {
+            const flags = {
+                'US': '🇺🇸', 'CN': '🇨🇳', 'EU': '🇪🇺', 'JP': '🇯🇵',
+                'GB': '🇬🇧', 'AU': '🇦🇺', 'CA': '🇨🇦', 'CH': '🇨🇭',
+                'DE': '🇩🇪', 'FR': '🇫🇷', 'NZ': '🇳🇿'
+            };
+            return flags[country] || '🌍';
+        }
+        
+        function getSectionTitle(key) {
+            const titles = {
+                'market': '📈 市场概况',
+                'events': '📅 事件分析', 
+                'outlook': '🔮 货币对展望',
+                'risks': '⚠️ 风险提示'
+            };
+            return titles[key] || key;
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>比特币交易系统架构图</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .mermaid {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .description {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        .layer-description {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: white;
+            border-radius: 5px;
+            border-left: 3px solid #28a745;
+        }
+        .layer-title {
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>事件驱动比特币交易系统架构图</h1>
+        
+        <div class="mermaid">
+            graph TB
+                subgraph "数据源层"
+                    DS1[Web3社区数据]
+                    DS2[X论坛/Twitter]
+                    DS3[宏观经济数据]
+                    DS4[股票市场数据]
+                    DS5[外汇市场数据]
+                    DS6[Binance价格数据]
+                end
+
+                subgraph "数据收集层"
+                    DC[数据收集器]
+                    DQ[数据队列]
+                end
+
+                subgraph "分析处理层"
+                    NA[新闻分析器]
+                    TIE[技术指标引擎]
+                    LLM[大语言模型服务]
+                end
+
+                subgraph "决策层"
+                    DE[决策引擎]
+                    RM[风险管理器]
+                    PM[持仓管理器]
+                end
+
+                subgraph "交易执行层"
+                    TS[交易系统]
+                    BA[Binance API]
+                end
+
+                subgraph "存储层"
+                    RDB[(关系数据库)]
+                    TSDB[(时序数据库)]
+                    CACHE[(缓存)]
+                end
+
+                subgraph "用户界面层"
+                    WEB[Web界面]
+                    API[REST API]
+                    WS[WebSocket]
+                end
+
+                DS1 --> DC
+                DS2 --> DC
+                DS3 --> DC
+                DS4 --> DC
+                DS5 --> DC
+                DS6 --> DC
+
+                DC --> DQ
+                DQ --> NA
+                DQ --> TIE
+
+                NA --> LLM
+                NA --> DE
+                TIE --> DE
+
+                DE --> RM
+                DE --> PM
+                RM --> TS
+                PM --> TS
+
+                TS --> BA
+                BA --> TS
+
+                NA --> RDB
+                TIE --> TSDB
+                DE --> RDB
+                TS --> RDB
+
+                WEB --> API
+                API --> DE
+                API --> PM
+                API --> TS
+                WS --> API
+        </div>
+
+        <div class="description">
+            <h2>架构层级说明</h2>
+            
+            <div class="layer-description">
+                <div class="layer-title">1. 数据源层</div>
+                <div>收集多源市场信息：Web3社区动态、社交媒体情绪、宏观经济指标、股票外汇数据和实时价格数据</div>
+            </div>
+
+            <div class="layer-description">
+                <div class="layer-title">2. 数据收集层</div>
+                <div>统一的数据收集器负责从各数据源获取信息，通过消息队列进行异步处理和缓冲</div>
+            </div>
+
+            <div class="layer-description">
+                <div class="layer-title">3. 分析处理层</div>
+                <div>新闻分析器结合大语言模型进行情绪分析，技术指标引擎计算RSI、MACD等关键指标</div>
+            </div>
+
+            <div class="layer-description">
+                <div class="layer-title">4. 决策层</div>
+                <div>决策引擎综合分析结果生成交易建议，风险管理器控制风险，持仓管理器跟踪资产状态</div>
+            </div>
+
+            <div class="layer-description">
+                <div class="layer-title">5. 交易执行层</div>
+                <div>交易系统通过Binance API执行实际买卖操作，确保决策到执行的无缝衔接</div>
+            </div>
+
+            <div class="layer-description">
+                <div class="layer-title">6. 存储层</div>
+                <div>关系数据库存储交易记录和配置，时序数据库存储价格和指标数据，缓存提升查询性能</div>
+            </div>
+
+            <div class="layer-description">
+                <div class="layer-title">7. 用户界面层</div>
+                <div>Web界面提供可视化监控，REST API支持程序化访问，WebSocket实现实时数据推送</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true
+            }
+        });
+    </script>
+</body>
+</html>

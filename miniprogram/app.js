@@ -2,7 +2,7 @@
 App({
   // 全局数据
   globalData: {
-    apiBaseUrl: 'https://api.ericlovestella.cn', // 你的后端域名
+    apiBaseUrl: 'http://localhost:5001', // 本地后端地址
     userInfo: null,
     systemInfo: null,
     isConnected: true
