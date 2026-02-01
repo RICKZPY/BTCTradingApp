@@ -240,5 +240,5 @@ class RedisClient:
             logger.info("Redis connection closed")
 
 
-# Global Redis client instance
-redis_client = RedisClient()
+# Global Redis client instance - create when needed
+# redis_client = RedisClient()
