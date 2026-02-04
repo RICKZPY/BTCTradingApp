@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Strategy API</title>
+</head>
+<body>
+    <h1>Strategy API Test</h1>
+    <button onclick="testStrategies()">Test Get Strategies</button>
+    <button onclick="testTemplates()">Test Get Templates</button>
+    <div id="result"></div>
+
+    <script>
+        async function testStrategies() {
+            try {
+                const response = await fetch('/api/v1/strategies');
+                const data = await response.json();
+                document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+            } catch (error) {
+                document.getElementById('result').innerHTML = 'Error: ' + error.message;
+            }
+        }
+
+        async function testTemplates() {
+            try {
+                const response = await fetch('/api/v1/strategies/templates');
+                const data = await response.json();
+                document.getElementById('result').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+            } catch (error) {
+                document.getElementById('result').innerHTML = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>

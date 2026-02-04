@@ -1,0 +1,23 @@
+{
+  "info": {
+    "id": "d3828c04-d643-4708-acda-c966e19f5bf6",
+    "name": "布林带突破策略",
+    "description": "基于布林带的突破策略，当价格突破上轨时买入，跌破下轨时卖出",
+    "author": "系统模板",
+    "version": "1.0.0",
+    "created_at": "2026-02-04T10:09:19.531856",
+    "updated_at": "2026-02-04T10:09:19.531856",
+    "tags": [
+      "技术分析",
+      "布林带",
+      "突破策略",
+      "中级"
+    ]
+  },
+  "code": "class BollingerBandsStrategy(BaseStrategy):\n    \"\"\"布林带突破策略\"\"\"\n    \n    def __init__(self, parameters=None):\n        super().__init__(parameters)\n        self.name = \"布林带突破策略\"\n        self.description = \"基于布林带的突破策略\"\n        self.version = \"1.0.0\"\n        \n        self.period = self.parameters.get(\"period\", 20)\n        self.std_dev = self.parameters.get(\"std_dev\", 2.0)\n        self.min_confidence = self.parameters.get(\"min_confidence\", 0.7)\n    \n    def calculate_bollinger_bands(self, prices):\n        \"\"\"计算布林带\"\"\"\n        if len(prices) < self.period:\n            return None, None, None\n        \n        recent_prices = prices[-self.period:]\n        sma = np.mean(recent_prices)\n        std = np.std(recent_prices)\n        \n        upper_band = sma + (self.std_dev * std)\n        lower_band = sma - (self.std_dev * std)\n        \n        return upper_band, sma, lower_band\n    \n    def generate_signal(self, market_data, sentiment_score=0.5, technical_indicators=None):\n        if len(market_data) < self.period + 1:\n            return {\"action\": \"HOLD\", \"confidence\": 0.0, \"reasoning\": \"数据不足\"}\n        \n        prices = [data.price for data in market_data]\n        current_price = prices[-1]\n        \n        # 计算布林带\n        upper_band, middle_band, lower_band = self.calculate_bollinger_bands(prices)\n        \n        if upper_band is None:\n            return {\"action\": \"HOLD\", \"confidence\": 0.0, \"reasoning\": \"无法计算布林带\"}\n        \n        # 计算价格相对于布林带的位置\n        band_width = upper_band - lower_band\n        price_position = (current_price - lower_band) / band_width if band_width > 0 else 0.5\n        \n        # 突破上轨：买入信号\n        if current_price > upper_band:\n            breakthrough_strength = (current_price - upper_band) / upper_band\n            confidence = min(0.95, self.min_confidence + breakthrough_strength * 0.2)\n            return {\n                \"action\": \"BUY\",\n                \"confidence\": confidence,\n                \"reasoning\": f\"价格突破上轨：{current_price:.2f} > {upper_band:.2f}\"\n            }\n        \n        # 跌破下轨：卖出信号\n        elif current_price < lower_band:\n            breakthrough_strength = (lower_band - current_price) / lower_band\n            confidence = min(0.95, self.min_confidence + breakthrough_strength * 0.2)\n            return {\n                \"action\": \"SELL\",\n                \"confidence\": confidence,\n                \"reasoning\": f\"价格跌破下轨：{current_price:.2f} < {lower_band:.2f}\"\n            }\n        \n        # 在布林带内：持有\n        else:\n            return {\n                \"action\": \"HOLD\",\n                \"confidence\": 0.5,\n                \"reasoning\": f\"价格在布林带内：{lower_band:.2f} < {current_price:.2f} < {upper_band:.2f}\"\n            }\n    \n    def get_parameters(self):\n        return self.parameters\n    \n    def get_info(self):\n        return {\n            \"name\": self.name,\n            \"description\": self.description,\n            \"version\": self.version\n        }",
+  "parameters": {
+    "period": 20,
+    "std_dev": 2.0,
+    "min_confidence": 0.7
+  }
+}

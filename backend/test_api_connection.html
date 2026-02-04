@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Connection Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>API Connection Test</h1>
+    
+    <button onclick="testHealth()">Test Health Endpoint</button>
+    <button onclick="testSystemStatus()">Test System Status</button>
+    <button onclick="testPortfolio()">Test Portfolio</button>
+    <button onclick="testMarketData()">Test Market Data</button>
+    
+    <div id="results"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1';
+        
+        function addResult(message, isSuccess = true) {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `result ${isSuccess ? 'success' : 'error'}`;
+            div.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong>: ${message}`;
+            results.appendChild(div);
+        }
+        
+        async function testEndpoint(url, name) {
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addResult(`✅ ${name}: ${data.message || 'Success'}`, true);
+                    console.log(`${name} response:`, data);
+                } else {
+                    addResult(`❌ ${name}: HTTP ${response.status}`, false);
+                }
+            } catch (error) {
+                addResult(`❌ ${name}: ${error.message}`, false);
+                console.error(`${name} error:`, error);
+            }
+        }
+        
+        function testHealth() {
+            testEndpoint(`${API_BASE}/health/`, 'Health Check');
+        }
+        
+        function testSystemStatus() {
+            testEndpoint(`${API_BASE}/system/status`, 'System Status');
+        }
+        
+        function testPortfolio() {
+            testEndpoint(`${API_BASE}/trading/portfolio`, 'Portfolio');
+        }
+        
+        function testMarketData() {
+            testEndpoint(`${API_BASE}/trading/market-data/BTCUSDT`, 'Market Data');
+        }
+        
+        // Auto-test on load
+        window.onload = function() {
+            addResult('🚀 Starting API connection tests...', true);
+            setTimeout(() => testHealth(), 500);
+            setTimeout(() => testSystemStatus(), 1000);
+            setTimeout(() => testPortfolio(), 1500);
+            setTimeout(() => testMarketData(), 2000);
+        };
+    </script>
+</body>
+</html>

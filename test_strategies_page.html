@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Strategies Page</title>
+</head>
+<body>
+    <h1>Test Strategies Page Access</h1>
+    <div id="result"></div>
+
+    <script>
+        // Test if we can access the strategies API
+        async function testStrategiesAPI() {
+            try {
+                const response = await fetch('/api/v1/strategies');
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('result').innerHTML = 
+                        '<p style="color: green;">✅ API Working: Found ' + data.data.length + ' strategies</p>' +
+                        '<pre>' + JSON.stringify(data.data.map(s => s.info.name), null, 2) + '</pre>';
+                } else {
+                    document.getElementById('result').innerHTML = 
+                        '<p style="color: red;">❌ API Error: ' + data.message + '</p>';
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    '<p style="color: red;">❌ Network Error: ' + error.message + '</p>';
+            }
+        }
+
+        // Test on page load
+        testStrategiesAPI();
+    </script>
+</body>
+</html>

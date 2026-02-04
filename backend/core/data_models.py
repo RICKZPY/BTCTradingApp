@@ -418,8 +418,8 @@ class TradingDecision:
         """Validate data after initialization"""
         if not 0 <= self.confidence <= 1:
             raise ValueError("Confidence must be between 0 and 1")
-        if self.suggested_amount <= 0:
-            raise ValueError("Suggested amount must be positive")
+        if self.suggested_amount < 0:
+            raise ValueError("Suggested amount cannot be negative")
         if not self.reasoning.strip():
             raise ValueError("Reasoning cannot be empty")
     

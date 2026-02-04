@@ -1,0 +1,24 @@
+{
+  "info": {
+    "id": "185b5cc0-2832-48cf-b3c9-c220f975350c",
+    "name": "MACD交叉策略",
+    "description": "基于MACD指标的经典交叉策略，当MACD线上穿信号线时买入，下穿时卖出",
+    "author": "系统模板",
+    "version": "1.0.0",
+    "created_at": "2026-02-04T10:08:59.785411",
+    "updated_at": "2026-02-04T10:08:59.785411",
+    "tags": [
+      "技术分析",
+      "MACD",
+      "交叉策略",
+      "中级"
+    ]
+  },
+  "code": "class MACDStrategy(BaseStrategy):\n    \"\"\"MACD交叉策略\"\"\"\n    \n    def __init__(self, parameters=None):\n        super().__init__(parameters)\n        self.name = \"MACD交叉策略\"\n        self.description = \"基于MACD指标的交叉策略\"\n        self.version = \"1.0.0\"\n        \n        self.fast_period = self.parameters.get(\"fast_period\", 12)\n        self.slow_period = self.parameters.get(\"slow_period\", 26)\n        self.signal_period = self.parameters.get(\"signal_period\", 9)\n        self.min_confidence = self.parameters.get(\"min_confidence\", 0.65)\n    \n    def calculate_ema(self, prices, period):\n        \"\"\"计算指数移动平均线\"\"\"\n        if len(prices) < period:\n            return prices[-1] if prices else 0\n        \n        multiplier = 2 / (period + 1)\n        ema = prices[0]\n        for price in prices[1:]:\n            ema = (price * multiplier) + (ema * (1 - multiplier))\n        return ema\n    \n    def calculate_macd(self, prices):\n        \"\"\"计算MACD指标\"\"\"\n        if len(prices) < self.slow_period:\n            return 0, 0, 0\n        \n        fast_ema = self.calculate_ema(prices, self.fast_period)\n        slow_ema = self.calculate_ema(prices, self.slow_period)\n        macd_line = fast_ema - slow_ema\n        signal_line = self.calculate_ema([macd_line], self.signal_period)\n        histogram = macd_line - signal_line\n        \n        return macd_line, signal_line, histogram\n    \n    def generate_signal(self, market_data, sentiment_score=0.5, technical_indicators=None):\n        if len(market_data) < self.slow_period + self.signal_period:\n            return {\"action\": \"HOLD\", \"confidence\": 0.0, \"reasoning\": \"数据不足\"}\n        \n        prices = [data.price for data in market_data]\n        current_macd, current_signal, current_hist = self.calculate_macd(prices)\n        \n        prev_prices = prices[:-1]\n        if len(prev_prices) >= self.slow_period:\n            prev_macd, prev_signal, prev_hist = self.calculate_macd(prev_prices)\n        else:\n            prev_macd = prev_signal = 0\n        \n        if prev_macd <= prev_signal and current_macd > current_signal:\n            confidence = min(0.9, self.min_confidence + abs(current_hist) * 0.1)\n            return {\n                \"action\": \"BUY\",\n                \"confidence\": confidence,\n                \"reasoning\": f\"MACD金叉：MACD({current_macd:.2f}) > 信号线({current_signal:.2f})\"\n            }\n        elif prev_macd >= prev_signal and current_macd < current_signal:\n            confidence = min(0.9, self.min_confidence + abs(current_hist) * 0.1)\n            return {\n                \"action\": \"SELL\",\n                \"confidence\": confidence,\n                \"reasoning\": f\"MACD死叉：MACD({current_macd:.2f}) < 信号线({current_signal:.2f})\"\n            }\n        \n        return {\n            \"action\": \"HOLD\",\n            \"confidence\": 0.5,\n            \"reasoning\": f\"无明确信号：MACD({current_macd:.2f}), 信号线({current_signal:.2f})\"\n        }\n    \n    def get_parameters(self):\n        return self.parameters\n    \n    def get_info(self):\n        return {\n            \"name\": self.name,\n            \"description\": self.description,\n            \"version\": self.version\n        }",
+  "parameters": {
+    "fast_period": 12,
+    "slow_period": 26,
+    "signal_period": 9,
+    "min_confidence": 0.65
+  }
+}

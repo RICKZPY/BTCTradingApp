@@ -43,8 +43,38 @@ class RedisSettings(BaseSettings):
 
 class APISettings(BaseSettings):
     """External API configuration"""
+    # AI Providers - Primary
+    ai_provider: str = "openai"  # Primary AI provider: openai, anthropic, google, deepseek, doubao
+    ai_model: str = "gpt-4"  # Primary model to use
+    
     # OpenAI
     openai_api_key: str = ""
+    openai_base_url: Optional[str] = None  # For custom endpoints
+    openai_organization: Optional[str] = None
+    
+    # Anthropic
+    anthropic_api_key: str = ""
+    anthropic_base_url: Optional[str] = None
+    anthropic_version: str = "2023-06-01"
+    
+    # Google AI
+    google_api_key: str = ""
+    google_base_url: Optional[str] = None
+    
+    # Deepseek (中国)
+    deepseek_api_key: str = ""
+    deepseek_base_url: Optional[str] = None
+    
+    # Doubao/豆包 (字节跳动)
+    doubao_api_key: str = ""
+    doubao_base_url: Optional[str] = None
+    doubao_region: str = "cn-beijing"
+    
+    # AI Configuration
+    ai_temperature: float = 0.3
+    ai_max_tokens: int = 1000
+    ai_fallback_provider: Optional[str] = None  # Fallback provider if primary fails
+    ai_fallback_model: Optional[str] = None
     
     # Binance
     binance_api_key: str = ""

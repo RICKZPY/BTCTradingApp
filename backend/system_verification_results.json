@@ -1,0 +1,201 @@
+{
+  "system_verification_summary": {
+    "overall_status": "CRITICAL_FAILURE",
+    "total_checks": 23,
+    "passed_checks": 13,
+    "warning_checks": 3,
+    "failed_checks": 7,
+    "skipped_checks": 0,
+    "success_rate": 0.5652173913043478,
+    "total_duration_seconds": 3.6433677673339844
+  },
+  "detailed_results": [
+    {
+      "component": "Import: core.data_models",
+      "status": "PASS",
+      "details": "",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:56.604245"
+    },
+    {
+      "component": "Import: core.event_bus",
+      "status": "FAIL",
+      "details": "",
+      "error": "No module named 'core.event_bus'",
+      "timestamp": "2026-02-03T01:03:56.604646"
+    },
+    {
+      "component": "Import: config",
+      "status": "PASS",
+      "details": "",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:56.711848"
+    },
+    {
+      "component": "Import: database.connection",
+      "status": "FAIL",
+      "details": "",
+      "error": "No module named 'database.connection'",
+      "timestamp": "2026-02-03T01:03:56.712110"
+    },
+    {
+      "component": "Import: database.models",
+      "status": "FAIL",
+      "details": "",
+      "error": "No module named 'psycopg2'",
+      "timestamp": "2026-02-03T01:03:56.842818"
+    },
+    {
+      "component": "Core Imports",
+      "status": "FAIL",
+      "details": "Failed to import 3 modules: ['core.event_bus', 'database.connection', 'database.models']",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:56.843025"
+    },
+    {
+      "component": "Data Collection Components",
+      "status": "FAIL",
+      "details": "",
+      "error": "__init_subclass__() takes no keyword arguments",
+      "timestamp": "2026-02-03T01:03:56.970893"
+    },
+    {
+      "component": "News Analyzer",
+      "status": "WARNING",
+      "details": "Not available (likely missing API keys)",
+      "error": "cannot import name 'AsyncOpenAI' from 'openai' (/Users/rickzhong/\u7a0b\u5e8f/anaconda3/lib/python3.7/site-packages/openai/__init__.py)",
+      "timestamp": "2026-02-03T01:03:57.077694"
+    },
+    {
+      "component": "Technical Analysis Engine",
+      "status": "PASS",
+      "details": "RSI calculation successful: 100.00",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:57.079897"
+    },
+    {
+      "component": "Decision Engine",
+      "status": "FAIL",
+      "details": "",
+      "error": "__init__() got an unexpected keyword argument 'available_balance_usdt'",
+      "timestamp": "2026-02-03T01:03:57.081686"
+    },
+    {
+      "component": "Risk Management",
+      "status": "FAIL",
+      "details": "",
+      "error": "__init__() got an unexpected keyword argument 'available_balance_usdt'",
+      "timestamp": "2026-02-03T01:03:57.084580"
+    },
+    {
+      "component": "Backtesting Engine",
+      "status": "PASS",
+      "details": "Backtest completed: 0 trades, 0.00% return",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110441"
+    },
+    {
+      "component": "API Endpoints",
+      "status": "PASS",
+      "details": "All 5 required endpoints found",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110702"
+    },
+    {
+      "component": "Config: Environment configuration",
+      "status": "PASS",
+      "details": "File exists: .env",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110755"
+    },
+    {
+      "component": "Config: Python dependencies",
+      "status": "PASS",
+      "details": "File exists: requirements.txt",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110789"
+    },
+    {
+      "component": "Config: Docker composition",
+      "status": "PASS",
+      "details": "File exists: ../docker-compose.yml",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110825"
+    },
+    {
+      "component": "Config: Deployment script",
+      "status": "PASS",
+      "details": "File exists: ../deploy.sh",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110860"
+    },
+    {
+      "component": "Config: Deployment documentation",
+      "status": "PASS",
+      "details": "File exists: ../DEPLOYMENT_GUIDE.md",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110894"
+    },
+    {
+      "component": "Configuration Files",
+      "status": "PASS",
+      "details": "All configuration files present",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:58.110924"
+    },
+    {
+      "component": "Performance Optimizer",
+      "status": "PASS",
+      "details": "Collected 5 performance metrics",
+      "error": "",
+      "timestamp": "2026-02-03T01:03:59.128610"
+    },
+    {
+      "component": "Auto Optimization",
+      "status": "PASS",
+      "details": "Auto-optimization completed",
+      "error": "",
+      "timestamp": "2026-02-03T01:04:00.139610"
+    },
+    {
+      "component": "Database Components",
+      "status": "WARNING",
+      "details": "Database components not fully available",
+      "error": "No module named 'psycopg2'",
+      "timestamp": "2026-02-03T01:04:00.142089"
+    },
+    {
+      "component": "Integration Tests",
+      "status": "WARNING",
+      "details": "Integration tests not available",
+      "error": "cannot import name 'AsyncOpenAI' from 'openai' (/Users/rickzhong/\u7a0b\u5e8f/anaconda3/lib/python3.7/site-packages/openai/__init__.py)",
+      "timestamp": "2026-02-03T01:04:00.239869"
+    }
+  ],
+  "component_status": {
+    "Import: core.data_models": "PASS",
+    "Import: core.event_bus": "FAIL",
+    "Import: config": "PASS",
+    "Import: database.connection": "FAIL",
+    "Import: database.models": "FAIL",
+    "Core Imports": "FAIL",
+    "Data Collection Components": "FAIL",
+    "News Analyzer": "WARNING",
+    "Technical Analysis Engine": "PASS",
+    "Decision Engine": "FAIL",
+    "Risk Management": "FAIL",
+    "Backtesting Engine": "PASS",
+    "API Endpoints": "PASS",
+    "Config: Environment configuration": "PASS",
+    "Config: Python dependencies": "PASS",
+    "Config: Docker composition": "PASS",
+    "Config: Deployment script": "PASS",
+    "Config: Deployment documentation": "PASS",
+    "Configuration Files": "PASS",
+    "Performance Optimizer": "PASS",
+    "Auto Optimization": "PASS",
+    "Database Components": "WARNING",
+    "Integration Tests": "WARNING"
+  },
+  "verification_timestamp": "2026-02-03T01:04:00.240057"
+}
