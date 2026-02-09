@@ -22,52 +22,58 @@ const WelcomeBanner: React.FC<WelcomeBannerProps> = ({ onDismiss }) => {
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* 新手指南 */}
-            <div className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <a
+              href="https://github.com/RICKZPY/BTCTradingApp/blob/main/BTCOptionsTrading/新手快速入门.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-3 p-4 bg-gray-800/50 hover:bg-gray-800/70 rounded-lg border border-gray-700/50 hover:border-blue-500/50 transition-all group cursor-pointer"
+            >
               <span className="text-2xl">📖</span>
               <div>
-                <h3 className="font-semibold text-gray-100">
+                <h3 className="font-semibold text-gray-100 group-hover:text-blue-400 transition-colors">
                   新手快速入门
                 </h3>
-                <p className="text-sm text-gray-400 mt-1 mb-2">
+                <p className="text-sm text-gray-400 mt-1">
                   5分钟学会创建策略和运行回测
                 </p>
-                <p className="text-xs text-blue-400">
-                  查看项目根目录下的 新手快速入门.md
-                </p>
               </div>
-            </div>
+            </a>
             
             {/* 完整指南 */}
-            <div className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <a
+              href="https://github.com/RICKZPY/BTCTradingApp/blob/main/BTCOptionsTrading/使用指南.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-3 p-4 bg-gray-800/50 hover:bg-gray-800/70 rounded-lg border border-gray-700/50 hover:border-blue-500/50 transition-all group cursor-pointer"
+            >
               <span className="text-2xl">📚</span>
               <div>
-                <h3 className="font-semibold text-gray-100">
+                <h3 className="font-semibold text-gray-100 group-hover:text-blue-400 transition-colors">
                   完整使用指南
                 </h3>
-                <p className="text-sm text-gray-400 mt-1 mb-2">
+                <p className="text-sm text-gray-400 mt-1">
                   详细的功能说明和使用方法
                 </p>
-                <p className="text-xs text-blue-400">
-                  查看项目根目录下的 使用指南.md
-                </p>
               </div>
-            </div>
+            </a>
             
             {/* API配置 */}
-            <div className="flex items-start gap-3 p-4 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            <a
+              href="https://github.com/RICKZPY/BTCTradingApp/blob/main/BTCOptionsTrading/API_CONFIGURATION_GUIDE.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-3 p-4 bg-gray-800/50 hover:bg-gray-800/70 rounded-lg border border-gray-700/50 hover:border-blue-500/50 transition-all group cursor-pointer"
+            >
               <span className="text-2xl">⚙️</span>
               <div>
-                <h3 className="font-semibold text-gray-100">
+                <h3 className="font-semibold text-gray-100 group-hover:text-blue-400 transition-colors">
                   API配置指南
                 </h3>
-                <p className="text-sm text-gray-400 mt-1 mb-2">
+                <p className="text-sm text-gray-400 mt-1">
                   配置真实数据源和API密钥
                 </p>
-                <p className="text-xs text-blue-400">
-                  查看 API_CONFIGURATION_GUIDE.md
-                </p>
               </div>
-            </div>
+            </a>
           </div>
           
           <div className="mt-4 flex items-center gap-4 text-sm">
