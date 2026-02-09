@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: #474D57;
+  }
+  
+  body {
+    @apply bg-bg-primary text-text-primary font-sans;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* 滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-secondary;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-text-disabled rounded;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-secondary;
+  }
+}
+
+@layer components {
+  /* 按钮样式 */
+  .btn {
+    @apply px-4 py-2 rounded font-medium transition-all duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-accent-blue text-white hover:bg-opacity-90;
+  }
+
+  .btn-success {
+    @apply bg-accent-green text-white hover:bg-opacity-90;
+  }
+
+  .btn-danger {
+    @apply bg-accent-red text-white hover:bg-opacity-90;
+  }
+
+  .btn-secondary {
+    @apply bg-bg-card text-text-primary hover:bg-opacity-80;
+  }
+
+  /* 卡片样式 */
+  .card {
+    @apply bg-bg-card rounded-lg p-4 shadow-card;
+  }
+
+  /* 输入框样式 */
+  .input {
+    @apply bg-bg-secondary text-text-primary border border-text-disabled rounded px-3 py-2 focus:outline-none focus:border-accent-blue transition-colors;
+  }
+
+  /* 选择器样式 */
+  .select {
+    @apply bg-bg-secondary text-text-primary border border-text-disabled rounded px-3 py-2 focus:outline-none focus:border-accent-blue transition-colors;
+  }
+}
