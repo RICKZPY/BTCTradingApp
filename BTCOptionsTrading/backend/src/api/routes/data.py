@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from src.connectors.deribit_connector import DeribitConnector
+from src.connectors.market_data_cache import get_cache
 from src.pricing.options_engine import OptionsEngine
 from src.core.models import OptionType
 
@@ -139,18 +140,29 @@ async def get_options_chain(
 
 @router.get("/options-chain-enhanced", response_model=EnhancedOptionsChainResponse)
 async def get_options_chain_enhanced(
-    currency: str = "BTC"
+    currency: str = "BTC",
+    use_cache: bool = True
 ):
     """
     获取增强的期权链数据（按到期日分组）
     
     Args:
         currency: 货币类型
+        use_cache: 是否使用缓存（默认True）
         
     Returns:
         按到期日分组的期权链数据，包含标的价格和到期天数
     """
     try:
+        cache = get_cache(ttl_seconds=300)  # 5分钟TTL
+        cache_key = f"options_chain_enhanced_{currency}"
+        
+        # 尝试从缓存获取
+        if use_cache:
+            cached_data = cache.get(cache_key)
+            if cached_data is not None:
+                return cached_data
+        
         connector = DeribitConnector()
         
         # 获取标的价格
@@ -200,12 +212,18 @@ async def get_options_chain_enhanced(
             for group_data in sorted(expiry_map.values(), key=lambda x: x['expiration_timestamp'])
         ]
         
-        return EnhancedOptionsChainResponse(
+        result = EnhancedOptionsChainResponse(
             currency=currency,
             underlying_price=underlying_price,
             timestamp=datetime.now().isoformat(),
             expiry_groups=expiry_groups
         )
+        
+        # 存入缓存
+        if use_cache:
+            cache.set(cache_key, result)
+        
+        return result
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -307,3 +325,52 @@ async def get_volatility_surface(currency: str = "BTC"):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cache/stats")
+async def get_cache_stats():
+    """
+    获取缓存统计信息
+    
+    Returns:
+        缓存统计数据
+    """
+    cache = get_cache()
+    stats = cache.get_stats()
+    return {
+        "cache_stats": stats,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/cache/clear")
+async def clear_cache():
+    """
+    清空所有缓存
+    
+    Returns:
+        操作结果
+    """
+    cache = get_cache()
+    cache.clear()
+    return {
+        "message": "Cache cleared successfully",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.post("/cache/cleanup")
+async def cleanup_cache():
+    """
+    清理过期的缓存条目
+    
+    Returns:
+        清理结果
+    """
+    cache = get_cache()
+    cleaned_count = cache.cleanup_expired()
+    return {
+        "message": f"Cleaned up {cleaned_count} expired entries",
+        "cleaned_count": cleaned_count,
+        "timestamp": datetime.now().isoformat()
+    }
