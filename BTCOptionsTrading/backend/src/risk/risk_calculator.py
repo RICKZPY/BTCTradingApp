@@ -451,3 +451,226 @@ class RiskCalculator:
         
         logger.info(f"Stress test completed. Max loss: {result['max_loss']:.2f}")
         return result
+    
+    def calculate_strategy_risk(
+        self,
+        strategy_legs: List[Dict],
+        spot_price: float,
+        risk_free_rate: float = 0.05,
+        volatility: float = 0.8
+    ) -> Dict[str, any]:
+        """
+        Calculate comprehensive risk metrics for a strategy.
+        
+        Args:
+            strategy_legs: List of strategy legs with option contracts
+            spot_price: Current spot price of underlying
+            risk_free_rate: Risk-free interest rate
+            volatility: Historical volatility for VaR calculation
+            
+        Returns:
+            Dictionary with Greeks, max profit/loss, breakeven points, and risk metrics
+        """
+        from ..core.models import OptionContract, OptionType
+        from decimal import Decimal
+        
+        # Aggregate Greeks
+        total_greeks = {
+            'delta': 0.0,
+            'gamma': 0.0,
+            'theta': 0.0,
+            'vega': 0.0,
+            'rho': 0.0
+        }
+        
+        # Calculate initial cost and Greeks
+        initial_cost = 0.0
+        legs_data = []
+        
+        for leg in strategy_legs:
+            contract_data = leg['option_contract']
+            action = leg['action']
+            quantity = leg['quantity']
+            
+            # Parse expiration date
+            if isinstance(contract_data['expiration_date'], str):
+                expiry = datetime.fromisoformat(contract_data['expiration_date'].replace('Z', '+00:00'))
+            else:
+                expiry = contract_data['expiration_date']
+            
+            time_to_expiry = (expiry - datetime.now()).days / 365.0
+            if time_to_expiry <= 0:
+                time_to_expiry = 0.001  # Minimum time to avoid division by zero
+            
+            # Determine option type
+            option_type = OptionType.CALL if contract_data['option_type'].lower() == 'call' else OptionType.PUT
+            strike = float(contract_data['strike_price'])
+            
+            # Get implied volatility from contract or use default
+            iv = contract_data.get('implied_volatility', volatility)
+            
+            # Calculate option price
+            price = self.options_engine.black_scholes_price(
+                S=spot_price,
+                K=strike,
+                T=time_to_expiry,
+                r=risk_free_rate,
+                sigma=iv,
+                option_type=option_type
+            )
+            
+            # Calculate Greeks
+            greeks = self.options_engine.calculate_greeks(
+                S=spot_price,
+                K=strike,
+                T=time_to_expiry,
+                sigma=iv,
+                r=risk_free_rate,
+                option_type=option_type
+            )
+            
+            # Determine multiplier based on action
+            multiplier = 1 if action == 'buy' else -1
+            
+            # Update initial cost
+            initial_cost += price * quantity * multiplier
+            
+            # Aggregate Greeks
+            total_greeks['delta'] += greeks.delta * quantity * multiplier
+            total_greeks['gamma'] += greeks.gamma * quantity * multiplier
+            total_greeks['theta'] += greeks.theta * quantity * multiplier
+            total_greeks['vega'] += greeks.vega * quantity * multiplier
+            total_greeks['rho'] += greeks.rho * quantity * multiplier
+            
+            # Store leg data for payoff calculation
+            legs_data.append({
+                'strike': strike,
+                'option_type': option_type,
+                'action': action,
+                'quantity': quantity,
+                'price': price
+            })
+        
+        # Calculate max profit, max loss, and breakeven points
+        payoff_analysis = self._calculate_payoff_profile(legs_data, spot_price)
+        
+        result = {
+            'greeks': total_greeks,
+            'initial_cost': initial_cost,
+            'max_profit': payoff_analysis['max_profit'],
+            'max_loss': payoff_analysis['max_loss'],
+            'breakeven_points': payoff_analysis['breakeven_points'],
+            'risk_reward_ratio': payoff_analysis['risk_reward_ratio'],
+            'probability_of_profit': payoff_analysis.get('probability_of_profit', None)
+        }
+        
+        logger.info(f"Strategy risk calculated: Max Profit={result['max_profit']:.2f}, Max Loss={result['max_loss']:.2f}")
+        return result
+    
+    def _calculate_payoff_profile(
+        self,
+        legs_data: List[Dict],
+        spot_price: float,
+        num_points: int = 200
+    ) -> Dict[str, any]:
+        """
+        Calculate payoff profile for a strategy.
+        
+        Args:
+            legs_data: List of leg data with strike, type, action, quantity
+            spot_price: Current spot price
+            num_points: Number of points to evaluate
+            
+        Returns:
+            Dictionary with max profit, max loss, breakeven points
+        """
+        from ..core.models import OptionType
+        
+        # Determine price range for evaluation
+        strikes = [leg['strike'] for leg in legs_data]
+        min_strike = min(strikes)
+        max_strike = max(strikes)
+        
+        # Extend range significantly for strategies with wide strikes
+        price_range = max_strike - min_strike
+        if price_range == 0:
+            # For same-strike strategies (straddle), use spot price as reference
+            price_range = spot_price * 0.5
+            min_price = max(1, spot_price - price_range)
+            max_price = spot_price + price_range
+        else:
+            # For different-strike strategies, extend beyond strikes
+            extension = max(price_range * 0.5, spot_price * 0.3)
+            min_price = max(1, min_strike - extension)
+            max_price = max_strike + extension
+        
+        # Generate price points
+        prices = np.linspace(min_price, max_price, num_points)
+        payoffs = []
+        
+        # Calculate initial cost
+        initial_cost = sum(leg['price'] * leg['quantity'] * (1 if leg['action'] == 'buy' else -1) 
+                          for leg in legs_data)
+        
+        # Calculate payoff at each price point
+        for price in prices:
+            payoff = -initial_cost  # Start with initial cost
+            
+            for leg in legs_data:
+                strike = leg['strike']
+                option_type = leg['option_type']
+                action = leg['action']
+                quantity = leg['quantity']
+                
+                # Calculate intrinsic value at expiration
+                if option_type == OptionType.CALL:
+                    intrinsic = max(0, price - strike)
+                else:  # PUT
+                    intrinsic = max(0, strike - price)
+                
+                # Apply action and quantity
+                if action == 'buy':
+                    payoff += intrinsic * quantity
+                else:  # sell
+                    payoff -= intrinsic * quantity
+            
+            payoffs.append(payoff)
+        
+        payoffs = np.array(payoffs)
+        
+        # Find max profit and max loss
+        max_profit = float(np.max(payoffs))
+        max_loss = float(np.min(payoffs))
+        
+        # Find breakeven points (where payoff crosses zero)
+        breakeven_points = []
+        for i in range(len(payoffs) - 1):
+            # Check if payoff crosses zero between consecutive points
+            if (payoffs[i] < 0 and payoffs[i + 1] >= 0) or (payoffs[i] > 0 and payoffs[i + 1] <= 0) or \
+               (payoffs[i] <= 0 and payoffs[i + 1] > 0) or (payoffs[i] >= 0 and payoffs[i + 1] < 0):
+                # Linear interpolation to find exact breakeven
+                x1, x2 = prices[i], prices[i + 1]
+                y1, y2 = payoffs[i], payoffs[i + 1]
+                if abs(y2 - y1) > 1e-10:  # Avoid division by zero
+                    breakeven = x1 - y1 * (x2 - x1) / (y2 - y1)
+                    # Avoid duplicate breakeven points
+                    if not breakeven_points or abs(breakeven - breakeven_points[-1]) > 1.0:
+                        breakeven_points.append(float(breakeven))
+        
+        # Calculate risk-reward ratio
+        if max_loss != 0:
+            risk_reward_ratio = abs(max_profit / max_loss)
+        else:
+            risk_reward_ratio = float('inf') if max_profit > 0 else 0
+        
+        # Estimate probability of profit (simplified)
+        profitable_points = np.sum(payoffs > 0)
+        probability_of_profit = (profitable_points / len(payoffs)) * 100
+        
+        return {
+            'max_profit': max_profit,
+            'max_loss': max_loss,
+            'breakeven_points': breakeven_points,
+            'risk_reward_ratio': risk_reward_ratio,
+            'probability_of_profit': probability_of_profit
+        }

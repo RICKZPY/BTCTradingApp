@@ -66,6 +66,25 @@ class ValidationResponse(BaseModel):
     warnings: List[Dict]
 
 
+class RiskCalculateRequest(BaseModel):
+    """风险计算请求模型"""
+    legs: List[StrategyLegRequest]
+    spot_price: float
+    risk_free_rate: Optional[float] = 0.05
+    volatility: Optional[float] = 0.8
+
+
+class RiskMetricsResponse(BaseModel):
+    """风险指标响应模型"""
+    greeks: Dict[str, float]
+    initial_cost: float
+    max_profit: float
+    max_loss: float
+    breakeven_points: List[float]
+    risk_reward_ratio: float
+    probability_of_profit: Optional[float]
+
+
 class StrategyResponse(BaseModel):
     """策略响应模型"""
     id: str
@@ -432,6 +451,64 @@ async def validate_strategy(request: StrategyValidateRequest):
             is_valid=is_valid,
             errors=errors,
             warnings=warnings
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/calculate-risk", response_model=RiskMetricsResponse)
+async def calculate_strategy_risk(request: RiskCalculateRequest):
+    """
+    计算策略风险指标
+    
+    Args:
+        request: 风险计算请求
+        
+    Returns:
+        风险指标，包含Greeks、最大收益/损失、盈亏平衡点等
+    """
+    try:
+        # 转换legs为字典格式
+        legs_dict = []
+        for leg in request.legs:
+            leg_dict = {
+                "option_contract": {
+                    "instrument_name": leg.option_contract.instrument_name,
+                    "underlying": leg.option_contract.underlying,
+                    "option_type": leg.option_contract.option_type,
+                    "strike_price": leg.option_contract.strike_price,
+                    "expiration_date": leg.option_contract.expiration_date.isoformat(),
+                    "implied_volatility": request.volatility
+                },
+                "action": leg.action,
+                "quantity": leg.quantity
+            }
+            legs_dict.append(leg_dict)
+        
+        # 创建风险计算器
+        from src.pricing.options_engine import OptionsEngine
+        from src.risk.risk_calculator import RiskCalculator
+        
+        options_engine = OptionsEngine()
+        risk_calculator = RiskCalculator(options_engine)
+        
+        # 计算风险指标
+        risk_metrics = risk_calculator.calculate_strategy_risk(
+            strategy_legs=legs_dict,
+            spot_price=request.spot_price,
+            risk_free_rate=request.risk_free_rate,
+            volatility=request.volatility
+        )
+        
+        return RiskMetricsResponse(
+            greeks=risk_metrics['greeks'],
+            initial_cost=risk_metrics['initial_cost'],
+            max_profit=risk_metrics['max_profit'],
+            max_loss=risk_metrics['max_loss'],
+            breakeven_points=risk_metrics['breakeven_points'],
+            risk_reward_ratio=risk_metrics['risk_reward_ratio'],
+            probability_of_profit=risk_metrics.get('probability_of_profit')
         )
         
     except Exception as e:

@@ -36,7 +36,7 @@
     - **验证: 需求 7.1, 7.3**
 
 - [ ] 2. 后端API增强 - 风险计算
-  - [ ] 2.1 实现策略风险计算API接口
+  - [x] 2.1 实现策略风险计算API接口
     - 在`src/api/routes/strategies.py`中添加`POST /calculate-risk`端点
     - 扩展`RiskCalculator`类添加策略级别的风险计算
     - 实现盈亏平衡点计算
