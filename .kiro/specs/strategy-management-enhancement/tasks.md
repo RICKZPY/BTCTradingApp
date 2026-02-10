@@ -47,12 +47,12 @@
     - **验证: 需求 7.4, 14.3**
 
 - [ ] 3. 后端API增强 - 期权链数据
-  - [ ] 3.1 修复Deribit连接器的期权链接口
+  - [x] 3.1 修复Deribit连接器的期权链接口
     - 修改`DeribitConnector.get_options_chain`方法签名，移除`kind`参数
     - 更新`src/api/routes/data.py`中的调用
     - _需求: 3.1_
   
-  - [ ] 3.2 实现增强的期权链API接口
+  - [x] 3.2 实现增强的期权链API接口
     - 在`src/api/routes/data.py`中添加`GET /options-chain-enhanced`端点
     - 按到期日分组期权数据
     - 添加标的价格和到期天数信息

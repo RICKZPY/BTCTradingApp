@@ -60,24 +60,56 @@ class GreeksResponse(BaseModel):
     price: float
 
 
+class EnhancedOptionData(BaseModel):
+    """增强的期权数据"""
+    instrument_name: str
+    strike: float
+    option_type: str
+    bid_price: Optional[float]
+    ask_price: Optional[float]
+    last_price: Optional[float]
+    mark_price: Optional[float]
+    implied_volatility: Optional[float]
+    delta: Optional[float]
+    gamma: Optional[float]
+    theta: Optional[float]
+    vega: Optional[float]
+    volume: Optional[float]
+    open_interest: Optional[float]
+
+
+class ExpiryGroup(BaseModel):
+    """到期日分组"""
+    expiration_date: str
+    expiration_timestamp: int
+    days_to_expiry: int
+    options: List[EnhancedOptionData]
+
+
+class EnhancedOptionsChainResponse(BaseModel):
+    """增强的期权链响应"""
+    currency: str
+    underlying_price: float
+    timestamp: str
+    expiry_groups: List[ExpiryGroup]
+
+
 @router.get("/options-chain", response_model=List[OptionChainResponse])
 async def get_options_chain(
-    currency: str = "BTC",
-    kind: str = "option"
+    currency: str = "BTC"
 ):
     """
     获取期权链数据
     
     Args:
         currency: 货币类型
-        kind: 合约类型
         
     Returns:
         期权链数据列表
     """
     try:
         connector = DeribitConnector()
-        options_data = await connector.get_options_chain(currency, kind)
+        options_data = await connector.get_options_chain(currency)
         
         result = []
         for option in options_data:
@@ -100,6 +132,80 @@ async def get_options_chain(
             ))
         
         return result
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/options-chain-enhanced", response_model=EnhancedOptionsChainResponse)
+async def get_options_chain_enhanced(
+    currency: str = "BTC"
+):
+    """
+    获取增强的期权链数据（按到期日分组）
+    
+    Args:
+        currency: 货币类型
+        
+    Returns:
+        按到期日分组的期权链数据，包含标的价格和到期天数
+    """
+    try:
+        connector = DeribitConnector()
+        
+        # 获取标的价格
+        underlying_price = await connector.get_index_price(currency)
+        
+        # 获取期权链数据
+        options_data = await connector.get_options_chain(currency)
+        
+        # 按到期日分组
+        expiry_map = {}
+        for option in options_data:
+            expiry_timestamp = option.expiration_date.timestamp() if hasattr(option.expiration_date, 'timestamp') else 0
+            expiry_date_str = option.expiration_date.strftime("%Y-%m-%d") if hasattr(option.expiration_date, 'strftime') else ""
+            
+            # 计算到期天数
+            days_to_expiry = (option.expiration_date - datetime.now()).days if hasattr(option.expiration_date, '__sub__') else 0
+            
+            if expiry_date_str not in expiry_map:
+                expiry_map[expiry_date_str] = {
+                    'expiration_date': expiry_date_str,
+                    'expiration_timestamp': int(expiry_timestamp),
+                    'days_to_expiry': days_to_expiry,
+                    'options': []
+                }
+            
+            # 添加期权数据
+            expiry_map[expiry_date_str]['options'].append(EnhancedOptionData(
+                instrument_name=option.instrument_name,
+                strike=float(option.strike_price),
+                option_type=option.option_type.value,
+                bid_price=float(option.bid_price) if option.bid_price else None,
+                ask_price=float(option.ask_price) if option.ask_price else None,
+                last_price=float(option.last_price) if option.last_price else None,
+                mark_price=float(option.current_price) if option.current_price else None,
+                implied_volatility=option.implied_volatility,
+                delta=option.delta,
+                gamma=option.gamma,
+                theta=option.theta,
+                vega=option.vega,
+                volume=option.volume,
+                open_interest=option.open_interest
+            ))
+        
+        # 转换为列表并按到期日排序
+        expiry_groups = [
+            ExpiryGroup(**group_data)
+            for group_data in sorted(expiry_map.values(), key=lambda x: x['expiration_timestamp'])
+        ]
+        
+        return EnhancedOptionsChainResponse(
+            currency=currency,
+            underlying_price=underlying_price,
+            timestamp=datetime.now().isoformat(),
+            expiry_groups=expiry_groups
+        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

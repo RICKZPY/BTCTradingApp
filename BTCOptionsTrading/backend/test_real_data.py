@@ -43,7 +43,7 @@ async def test_real_data():
     # 测试获取期权链
     print("\n4. 获取BTC期权链...")
     try:
-        options = await connector.get_options_chain("BTC", "option")
+        options = await connector.get_options_chain("BTC")
         print(f"   ✓ 获取到 {len(options)} 个期权合约")
         
         if options:
