@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from src.storage.database import get_db
-from src.storage.dao import StrategyDAO
+from src.storage.dao import StrategyDAO, OptionContractDAO
+from src.storage.models import StrategyLegModel
 from src.core.models import Strategy, StrategyType, OptionType, ActionType
 from src.strategy.strategy_manager import StrategyManager
 from sqlalchemy.orm import Session
@@ -40,6 +41,13 @@ class StrategyCreateRequest(BaseModel):
     description: Optional[str] = None
     strategy_type: str
     legs: List[StrategyLegRequest]
+
+
+class StrategyUpdateRequest(BaseModel):
+    """更新策略请求模型"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    legs: Optional[List[StrategyLegRequest]] = None
 
 
 class StrategyResponse(BaseModel):
@@ -213,6 +221,115 @@ async def delete_strategy(
         raise HTTPException(status_code=404, detail="Strategy not found")
     
     return {"message": "Strategy deleted successfully"}
+
+
+@router.put("/{strategy_id}", response_model=StrategyResponse)
+async def update_strategy(
+    strategy_id: UUID,
+    request: StrategyUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    更新策略
+    
+    Args:
+        strategy_id: 策略ID
+        request: 策略更新请求
+        db: 数据库会话
+        
+    Returns:
+        更新后的策略信息
+    """
+    # 检查策略是否存在
+    db_strategy = StrategyDAO.get_by_id(db, strategy_id)
+    if not db_strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    
+    try:
+        # 准备更新数据
+        update_data = {}
+        
+        # 更新基本字段
+        if request.name is not None:
+            update_data['name'] = request.name
+        if request.description is not None:
+            update_data['description'] = request.description
+        
+        # 如果需要更新策略腿
+        if request.legs is not None:
+            from src.core.models import OptionContract, StrategyLeg
+            from decimal import Decimal
+            
+            # 删除旧的策略腿
+            db.query(StrategyLegModel).filter(
+                StrategyLegModel.strategy_id == str(strategy_id)
+            ).delete()
+            
+            # 创建新的策略腿
+            for i, leg_req in enumerate(request.legs):
+                # 创建期权合约
+                contract = OptionContract(
+                    instrument_name=leg_req.option_contract.instrument_name,
+                    underlying=leg_req.option_contract.underlying,
+                    option_type=OptionType(leg_req.option_contract.option_type),
+                    strike_price=Decimal(str(leg_req.option_contract.strike_price)),
+                    expiration_date=leg_req.option_contract.expiration_date,
+                    current_price=Decimal('0'),
+                    bid_price=Decimal('0'),
+                    ask_price=Decimal('0'),
+                    last_price=Decimal('0'),
+                    implied_volatility=0.0,
+                    delta=0.0,
+                    gamma=0.0,
+                    theta=0.0,
+                    vega=0.0,
+                    rho=0.0,
+                    open_interest=0,
+                    volume=0,
+                    timestamp=datetime.now()
+                )
+                
+                # 确保期权合约存在
+                db_contract = OptionContractDAO.get_by_instrument_name(
+                    db, contract.instrument_name
+                )
+                if not db_contract:
+                    db_contract = OptionContractDAO.create(db, contract)
+                
+                # 创建策略腿
+                db_leg = StrategyLegModel(
+                    strategy_id=str(strategy_id),
+                    option_contract_id=db_contract.id,
+                    action=leg_req.action,
+                    quantity=leg_req.quantity,
+                    leg_order=i
+                )
+                db.add(db_leg)
+        
+        # 更新策略基本信息
+        if update_data:
+            for key, value in update_data.items():
+                setattr(db_strategy, key, value)
+        
+        # 更新updated_at时间戳
+        db_strategy.updated_at = datetime.now()
+        
+        db.commit()
+        db.refresh(db_strategy)
+        
+        return StrategyResponse(
+            id=str(db_strategy.id),
+            name=db_strategy.name,
+            description=db_strategy.description,
+            strategy_type=db_strategy.strategy_type,
+            max_profit=float(db_strategy.max_profit) if db_strategy.max_profit else None,
+            max_loss=float(db_strategy.max_loss) if db_strategy.max_loss else None,
+            created_at=db_strategy.created_at
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/templates/list")

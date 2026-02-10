@@ -9,13 +9,13 @@
 ### 阶段 1: 核心功能增强
 
 - [ ] 1. 后端API增强 - 策略更新和验证
-  - [ ] 1.1 实现策略更新API接口
+  - [x] 1.1 实现策略更新API接口
     - 在`src/api/routes/strategies.py`中添加`PUT /{strategy_id}`端点
     - 实现`StrategyUpdateRequest`模型
     - 更新`StrategyDAO`添加`update`方法
     - _需求: 1.3_
   
-  - [ ] 1.2 编写策略更新API的单元测试
+  - [x] 1.2 编写策略更新API的单元测试
     - 测试成功更新场景
     - 测试部分字段更新
     - 测试不存在的策略ID

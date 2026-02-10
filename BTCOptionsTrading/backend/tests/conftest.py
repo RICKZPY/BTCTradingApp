@@ -6,11 +6,70 @@ import pytest
 from decimal import Decimal
 from datetime import datetime, timedelta
 from typing import List
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import NullPool
 
 from src.core.models import (
     OptionContract, OptionType, Greeks, MarketData, 
     Strategy, StrategyLeg, ActionType, StrategyType
 )
+from src.api.app import create_app
+from src.config.settings import Settings
+from src.storage.database import DatabaseManager, Base
+
+
+@pytest.fixture
+def test_settings():
+    """测试配置"""
+    settings = Settings()
+    # 使用SQLite内存数据库进行测试
+    settings.database.postgres_host = ""
+    settings.database.postgres_port = 0
+    settings.database.postgres_db = ":memory:"
+    settings.database.postgres_user = ""
+    settings.database.postgres_password = ""
+    return settings
+
+
+@pytest.fixture
+def test_db(test_settings):
+    """测试数据库会话"""
+    # 创建SQLite内存数据库
+    engine = create_engine("sqlite:///:memory:", poolclass=NullPool)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    
+    # 创建所有表
+    Base.metadata.create_all(bind=engine)
+    
+    # 创建会话
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+@pytest.fixture
+def test_client(test_settings, test_db):
+    """测试客户端"""
+    app = create_app(test_settings)
+    
+    # 覆盖数据库依赖
+    from src.storage.database import get_db
+    
+    def override_get_db():
+        try:
+            yield test_db
+        finally:
+            pass
+    
+    app.dependency_overrides[get_db] = override_get_db
+    
+    return TestClient(app)
 
 
 @pytest.fixture
