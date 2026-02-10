@@ -4,6 +4,7 @@ import { useAppStore } from '../../store/useAppStore'
 import type { Strategy, StrategyTemplate } from '../../api/types'
 import Modal from '../Modal'
 import LoadingSpinner from '../LoadingSpinner'
+import StrategyDetailModal from '../strategy/StrategyDetailModal'
 
 const StrategiesTab = () => {
   const [strategies, setStrategies] = useState<Strategy[]>([])
@@ -12,6 +13,8 @@ const StrategiesTab = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
   const [isCreating, setIsCreating] = useState(false)
+  const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null)
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const { setError, setSuccessMessage } = useAppStore()
 
   // 表单状态
@@ -281,7 +284,14 @@ const StrategiesTab = () => {
         ) : (
           <div className="grid grid-cols-1 gap-4">
             {strategies.map((strategy) => (
-              <div key={strategy.id} className="card">
+              <div 
+                key={strategy.id} 
+                className="card cursor-pointer hover:border-accent-blue transition-colors"
+                onClick={() => {
+                  setSelectedStrategy(strategy)
+                  setIsDetailModalOpen(true)
+                }}
+              >
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <h4 className="text-lg font-semibold text-text-primary">{strategy.name}</h4>
@@ -308,7 +318,10 @@ const StrategiesTab = () => {
                     </p>
                   </div>
                   <button
-                    onClick={() => handleDelete(strategy.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDelete(strategy.id)
+                    }}
                     className="text-accent-red hover:text-opacity-80 transition-colors ml-4"
                     title="删除策略"
                   >
@@ -322,6 +335,17 @@ const StrategiesTab = () => {
           </div>
         )}
       </div>
+
+      {/* 策略详情模态框 */}
+      <StrategyDetailModal
+        isOpen={isDetailModalOpen}
+        onClose={() => {
+          setIsDetailModalOpen(false)
+          setSelectedStrategy(null)
+        }}
+        strategy={selectedStrategy}
+        onDelete={handleDelete}
+      />
 
       {/* 创建策略模态框 */}
       <Modal

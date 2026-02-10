@@ -8,6 +8,18 @@ export interface Strategy {
   max_profit?: number
   max_loss?: number
   created_at: string
+  legs?: StrategyLeg[]
+  // 风险指标
+  breakeven_points?: number[]
+  greeks?: {
+    delta: number
+    gamma: number
+    theta: number
+    vega: number
+    rho: number
+  }
+  initial_cost?: number
+  risk_reward_ratio?: number
 }
 
 export interface OptionContract {
