@@ -25,7 +25,7 @@
     - **属性 1: 策略更新保持一致性**
     - **验证: 需求 1.3**
   
-  - [ ] 1.4 实现策略验证API接口
+  - [x] 1.4 实现策略验证API接口
     - 在`src/api/routes/strategies.py`中添加`POST /validate`端点
     - 创建`StrategyValidator`类在`src/strategy/strategy_validator.py`
     - 实现参数合理性验证逻辑

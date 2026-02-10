@@ -2,7 +2,7 @@
 策略管理API接口
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -13,6 +13,7 @@ from src.storage.dao import StrategyDAO, OptionContractDAO
 from src.storage.models import StrategyLegModel
 from src.core.models import Strategy, StrategyType, OptionType, ActionType
 from src.strategy.strategy_manager import StrategyManager
+from src.strategy.strategy_validator import StrategyValidator
 from sqlalchemy.orm import Session
 
 router = APIRouter()
@@ -48,6 +49,21 @@ class StrategyUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     legs: Optional[List[StrategyLegRequest]] = None
+
+
+class StrategyValidateRequest(BaseModel):
+    """验证策略请求模型"""
+    name: Optional[str] = None
+    strategy_type: str
+    legs: List[StrategyLegRequest]
+    initial_capital: Optional[float] = 100000.0
+
+
+class ValidationResponse(BaseModel):
+    """验证响应模型"""
+    is_valid: bool
+    errors: List[Dict]
+    warnings: List[Dict]
 
 
 class StrategyResponse(BaseModel):
@@ -369,3 +385,54 @@ async def list_strategy_templates():
             }
         ]
     }
+
+
+@router.post("/validate", response_model=ValidationResponse)
+async def validate_strategy(request: StrategyValidateRequest):
+    """
+    验证策略配置
+    
+    Args:
+        request: 策略验证请求
+        
+    Returns:
+        验证结果，包含错误和警告信息
+    """
+    try:
+        # 转换legs为字典格式
+        legs_dict = []
+        for leg in request.legs:
+            leg_dict = {
+                "option_contract": {
+                    "instrument_name": leg.option_contract.instrument_name,
+                    "underlying": leg.option_contract.underlying,
+                    "option_type": leg.option_contract.option_type,
+                    "strike_price": leg.option_contract.strike_price,
+                    "expiration_date": leg.option_contract.expiration_date.isoformat()
+                },
+                "action": leg.action,
+                "quantity": leg.quantity
+            }
+            legs_dict.append(leg_dict)
+        
+        # 创建验证器
+        from decimal import Decimal
+        validator = StrategyValidator(
+            initial_capital=Decimal(str(request.initial_capital))
+        )
+        
+        # 执行验证
+        is_valid, errors, warnings = validator.validate_strategy(
+            strategy_type=request.strategy_type,
+            legs=legs_dict,
+            name=request.name
+        )
+        
+        return ValidationResponse(
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
