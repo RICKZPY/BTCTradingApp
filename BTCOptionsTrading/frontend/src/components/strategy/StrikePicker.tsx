@@ -92,11 +92,11 @@ const StrikePicker = ({
       <button
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
-        disabled={disabled}
+        disabled={disabled || optionsData.length === 0}
         className={`
           w-full px-4 py-2 text-left bg-bg-secondary border border-text-disabled 
           rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-blue
-          ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-accent-blue cursor-pointer'}
+          ${disabled || optionsData.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:border-accent-blue cursor-pointer'}
           transition-colors
         `}
       >
@@ -109,6 +109,8 @@ const StrikePicker = ({
                   <span className="ml-2 text-xs text-accent-blue">(ATM)</span>
                 )}
               </span>
+            ) : optionsData.length === 0 ? (
+              '无可用期权数据'
             ) : (
               '选择执行价'
             )}

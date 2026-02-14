@@ -231,7 +231,9 @@ class StrategyValidator:
         return True
     
     def _validate_strike_configuration(self, strategy_type: str, legs: List[Dict]):
-        """验证执行价配置的合理性"""
+        """
+        验证执行价配置的合理性（任务11.3：配置合理性检查）
+        """
         if strategy_type == "strangle":
             # 宽跨式：看涨执行价应该高于看跌执行价
             if len(legs) == 2:
@@ -245,17 +247,24 @@ class StrategyValidator:
                     if call_strike <= put_strike:
                         self.errors.append(ValidationError(
                             "legs",
-                            f"宽跨式策略中，看涨期权执行价({call_strike})应该高于看跌期权执行价({put_strike})"
+                            f"❌ 宽跨式策略配置错误：看涨期权执行价(${call_strike:.2f})必须高于看跌期权执行价(${put_strike:.2f})"
+                        ))
+                    elif call_strike - put_strike < 1000:
+                        self.warnings.append(ValidationError(
+                            "legs",
+                            f"⚠️ 宽跨式策略的执行价差距较小(${call_strike - put_strike:.2f})，可能更适合使用跨式策略。",
+                            "warning"
                         ))
         
         elif strategy_type == "iron_condor":
             # 铁鹰策略：执行价应该按顺序排列
             if len(legs) == 4:
                 strikes = []
-                for leg in legs:
+                for i, leg in enumerate(legs):
                     strike = float(leg["option_contract"]["strike_price"])
                     option_type = leg["option_contract"]["option_type"]
-                    strikes.append((strike, option_type))
+                    action = leg["action"]
+                    strikes.append((strike, option_type, action, i))
                 
                 strikes.sort(key=lambda x: x[0])
                 
@@ -263,30 +272,88 @@ class StrategyValidator:
                 if strikes[0][1] != "put" or strikes[1][1] != "put":
                     self.errors.append(ValidationError(
                         "legs",
-                        "铁鹰策略的执行价顺序不正确：最低的两个执行价应该是看跌期权"
+                        "❌ 铁鹰策略配置错误：最低的两个执行价必须是看跌期权"
                     ))
                 
                 if strikes[2][1] != "call" or strikes[3][1] != "call":
                     self.errors.append(ValidationError(
                         "legs",
-                        "铁鹰策略的执行价顺序不正确：最高的两个执行价应该是看涨期权"
+                        "❌ 铁鹰策略配置错误：最高的两个执行价必须是看涨期权"
+                    ))
+                
+                # 检查买卖方向：应该是 买put, 卖put, 卖call, 买call
+                expected_actions = ["buy", "sell", "sell", "buy"]
+                actual_actions = [s[2] for s in strikes]
+                
+                if actual_actions != expected_actions:
+                    self.errors.append(ValidationError(
+                        "legs",
+                        f"❌ 铁鹰策略配置错误：买卖方向不正确。应该是：买入低执行价看跌、卖出高执行价看跌、卖出低执行价看涨、买入高执行价看涨"
+                    ))
+                
+                # 检查价差宽度是否合理
+                put_spread = strikes[1][0] - strikes[0][0]
+                call_spread = strikes[3][0] - strikes[2][0]
+                
+                if abs(put_spread - call_spread) > 500:
+                    self.warnings.append(ValidationError(
+                        "legs",
+                        f"⚠️ 铁鹰策略的看跌价差(${put_spread:.2f})和看涨价差(${call_spread:.2f})不相等。标准铁鹰策略通常使用相等的价差。",
+                        "warning"
+                    ))
+                
+                # 检查中间区间是否合理
+                middle_gap = strikes[2][0] - strikes[1][0]
+                if middle_gap < 1000:
+                    self.warnings.append(ValidationError(
+                        "legs",
+                        f"⚠️ 铁鹰策略的中间区间较窄(${middle_gap:.2f})，盈利区间较小，风险较高。",
+                        "warning"
                     ))
         
         elif strategy_type == "butterfly":
             # 蝶式策略：中间执行价应该在两侧之间
             if len(legs) == 3:
-                strikes = [float(leg["option_contract"]["strike_price"]) for leg in legs]
-                strikes.sort()
+                strikes_with_action = [(float(leg["option_contract"]["strike_price"]), leg["action"]) for leg in legs]
+                strikes_with_action.sort(key=lambda x: x[0])
+                
+                strikes = [s[0] for s in strikes_with_action]
+                actions = [s[1] for s in strikes_with_action]
+                
+                # 检查买卖方向：应该是 买, 卖, 买
+                if actions != ["buy", "sell", "buy"]:
+                    self.errors.append(ValidationError(
+                        "legs",
+                        "❌ 蝶式策略配置错误：买卖方向应该是：买入低执行价、卖出中间执行价、买入高执行价"
+                    ))
                 
                 # 检查是否等距
                 wing_width_1 = strikes[1] - strikes[0]
                 wing_width_2 = strikes[2] - strikes[1]
                 
-                if abs(wing_width_1 - wing_width_2) > 0.01:
+                if abs(wing_width_1 - wing_width_2) > 100:
                     self.warnings.append(ValidationError(
                         "legs",
-                        f"蝶式策略的翼宽不相等：{wing_width_1} vs {wing_width_2}。这可能不是标准的蝶式策略",
+                        f"⚠️ 蝶式策略的翼宽不相等：左翼${wing_width_1:.2f} vs 右翼${wing_width_2:.2f}。标准蝶式策略应该使用相等的翼宽。",
                         "warning"
+                    ))
+                
+                # 检查翼宽是否合理
+                if wing_width_1 < 500:
+                    self.warnings.append(ValidationError(
+                        "legs",
+                        f"⚠️ 蝶式策略的翼宽较小(${wing_width_1:.2f})，盈利区间较窄。",
+                        "warning"
+                    ))
+        
+        elif strategy_type == "straddle":
+            # 跨式策略：看涨和看跌应该使用相同的执行价
+            if len(legs) == 2:
+                strikes = [float(leg["option_contract"]["strike_price"]) for leg in legs]
+                if abs(strikes[0] - strikes[1]) > 0.01:
+                    self.errors.append(ValidationError(
+                        "legs",
+                        f"❌ 跨式策略配置错误：看涨和看跌期权必须使用相同的执行价。当前：${strikes[0]:.2f} vs ${strikes[1]:.2f}"
                     ))
     
     def _validate_expiry_consistency(self, legs: List[Dict]):
@@ -304,24 +371,63 @@ class StrategyValidator:
             ))
     
     def _validate_quantities(self, legs: List[Dict]):
-        """验证数量的合理性"""
+        """
+        验证数量的合理性（任务11.3：配置合理性检查）
+        """
         quantities = [int(leg["quantity"]) for leg in legs]
         
+        # 检查是否有负数数量
+        if any(q < 0 for q in quantities):
+            self.errors.append(ValidationError(
+                "legs",
+                "❌ 数量不能为负数"
+            ))
+        
+        # 检查是否有零数量
+        if any(q == 0 for q in quantities):
+            self.errors.append(ValidationError(
+                "legs",
+                "❌ 数量不能为零"
+            ))
+        
         # 检查是否有异常大的数量
-        max_quantity = max(quantities)
+        max_quantity = max(quantities) if quantities else 0
         if max_quantity > 100:
             self.warnings.append(ValidationError(
                 "legs",
-                f"策略中有较大的数量({max_quantity})。请确认这是预期的",
+                f"⚠️ 策略中有较大的数量({max_quantity})。请确认这是预期的，大数量会增加交易成本和滑点风险。",
                 "warning"
             ))
+        
+        # 检查数量比例是否合理（对于多腿策略）
+        if len(quantities) > 1:
+            # 对于蝶式策略，中间腿的数量应该是两侧的2倍
+            if len(quantities) == 3:
+                sorted_quantities = sorted(quantities)
+                if sorted_quantities[2] != sorted_quantities[0] * 2 and sorted_quantities[2] != sorted_quantities[1] * 2:
+                    self.warnings.append(ValidationError(
+                        "legs",
+                        f"⚠️ 蝶式策略的数量比例不标准。标准蝶式策略中间腿的数量应该是两侧的2倍。当前数量：{quantities}",
+                        "warning"
+                    ))
+            
+            # 检查数量是否相等（对于跨式、宽跨式）
+            if len(quantities) == 2:
+                if quantities[0] != quantities[1]:
+                    self.warnings.append(ValidationError(
+                        "legs",
+                        f"⚠️ 两腿策略的数量不相等({quantities[0]} vs {quantities[1]})。这可能导致不对称的风险暴露。",
+                        "warning"
+                    ))
     
     def _check_risk_levels(self, legs: List[Dict]):
-        """检查风险水平"""
+        """检查风险水平（任务11.2：风险阈值检查）"""
         # 简化的风险检查：估算最大损失
         # 这里只是一个粗略的估计，实际应该使用更复杂的风险计算
         
         total_cost = Decimal("0")
+        max_potential_loss = Decimal("0")
+        
         for leg in legs:
             # 假设每个期权的平均价格为执行价的5%
             strike = Decimal(str(leg["option_contract"]["strike_price"]))
@@ -331,14 +437,144 @@ class StrategyValidator:
             estimated_price = strike * Decimal("0.05")
             
             if action == "buy":
-                total_cost += estimated_price * quantity
+                # 买入期权：最大损失是权利金
+                leg_cost = estimated_price * quantity
+                total_cost += leg_cost
+                max_potential_loss += leg_cost
             else:  # sell
+                # 卖出期权：收入权利金，但有潜在的无限损失风险
                 total_cost -= estimated_price * quantity
+                # 对于卖出期权，估算最大损失为执行价的50%
+                max_potential_loss += strike * Decimal("0.5") * quantity
         
-        # 如果估算成本超过初始资金的50%，发出警告
-        if total_cost > self.initial_capital * Decimal("0.5"):
+        # 风险阈值检查
+        risk_threshold = self.initial_capital * Decimal("0.5")
+        
+        # 检查1：估算成本是否超过初始资金的50%
+        if total_cost > risk_threshold:
             self.warnings.append(ValidationError(
                 "risk",
-                f"策略的估算成本({total_cost})超过初始资金的50%。这是高风险策略",
+                f"⚠️ 高风险警告：策略的估算成本(${float(total_cost):.2f})超过初始资金的50%(${float(risk_threshold):.2f})。",
                 "warning"
             ))
+        
+        # 检查2：最大潜在损失是否超过初始资金的50%
+        if max_potential_loss > risk_threshold:
+            self.warnings.append(ValidationError(
+                "risk",
+                f"⚠️ 高风险警告：策略的最大潜在损失(${float(max_potential_loss):.2f})超过初始资金的50%(${float(risk_threshold):.2f})。建议降低数量或选择风险较低的策略。",
+                "warning"
+            ))
+        
+        # 检查3：是否包含卖出期权（裸卖）
+        has_naked_sell = any(leg["action"] == "sell" for leg in legs)
+        if has_naked_sell:
+            self.warnings.append(ValidationError(
+                "risk",
+                "⚠️ 策略包含卖出期权，存在潜在的无限损失风险。请确保您了解相关风险。",
+                "warning"
+            ))
+    
+    def validate_real_time(
+        self,
+        strategy_type: str,
+        legs: List[Dict],
+        name: str = None,
+        spot_price: float = None
+    ) -> Tuple[bool, List[Dict], List[Dict]]:
+        """
+        实时参数验证（任务11.1）
+        提供更详细的实时验证反馈
+        
+        Args:
+            strategy_type: 策略类型
+            legs: 策略腿列表
+            name: 策略名称（可选）
+            spot_price: 当前标的价格（可选，用于更精确的风险评估）
+            
+        Returns:
+            (is_valid, errors, warnings)
+        """
+        # 先执行基本验证
+        is_valid, errors, warnings = self.validate_strategy(strategy_type, legs, name)
+        
+        # 如果提供了标的价格，进行更详细的检查
+        if spot_price and is_valid:
+            self._validate_strike_reasonableness(legs, spot_price)
+            self._check_moneyness_warnings(legs, spot_price)
+        
+        return len(self.errors) == 0, [e.to_dict() for e in self.errors], [w.to_dict() for w in self.warnings]
+    
+    def _validate_strike_reasonableness(self, legs: List[Dict], spot_price: float):
+        """
+        验证执行价的合理性（任务11.3：配置合理性检查）
+        
+        Args:
+            legs: 策略腿列表
+            spot_price: 当前标的价格
+        """
+        for i, leg in enumerate(legs):
+            strike = float(leg["option_contract"]["strike_price"])
+            
+            # 检查执行价是否偏离标的价格太远
+            deviation = abs(strike - spot_price) / spot_price
+            
+            if deviation > 0.5:  # 偏离超过50%
+                self.warnings.append(ValidationError(
+                    f"legs[{i}].strike_price",
+                    f"执行价${strike:.2f}偏离当前标的价格${spot_price:.2f}超过50%。这可能是深度虚值期权，流动性可能较差。",
+                    "warning"
+                ))
+            
+            # 检查执行价是否为合理的整数倍（BTC通常是1000的倍数）
+            if strike % 1000 != 0 and strike > 10000:
+                self.warnings.append(ValidationError(
+                    f"legs[{i}].strike_price",
+                    f"执行价${strike:.2f}不是1000的整数倍。标准BTC期权执行价通常是1000的倍数。",
+                    "warning"
+                ))
+    
+    def _check_moneyness_warnings(self, legs: List[Dict], spot_price: float):
+        """
+        检查期权的价值状态并提供警告
+        
+        Args:
+            legs: 策略腿列表
+            spot_price: 当前标的价格
+        """
+        for i, leg in enumerate(legs):
+            strike = float(leg["option_contract"]["strike_price"])
+            option_type = leg["option_contract"]["option_type"]
+            action = leg["action"]
+            
+            # 判断期权的价值状态
+            if option_type == "call":
+                if strike < spot_price * 0.9:  # 深度实值
+                    moneyness = "深度实值"
+                elif strike < spot_price:  # 实值
+                    moneyness = "实值"
+                elif strike <= spot_price * 1.1:  # 平值
+                    moneyness = "平值"
+                elif strike <= spot_price * 1.3:  # 虚值
+                    moneyness = "虚值"
+                else:  # 深度虚值
+                    moneyness = "深度虚值"
+            else:  # put
+                if strike > spot_price * 1.1:  # 深度实值
+                    moneyness = "深度实值"
+                elif strike > spot_price:  # 实值
+                    moneyness = "实值"
+                elif strike >= spot_price * 0.9:  # 平值
+                    moneyness = "平值"
+                elif strike >= spot_price * 0.7:  # 虚值
+                    moneyness = "虚值"
+                else:  # 深度虚值
+                    moneyness = "深度虚值"
+            
+            # 对深度虚值期权提供警告
+            if moneyness == "深度虚值":
+                self.warnings.append(ValidationError(
+                    f"legs[{i}]",
+                    f"腿{i+1}是{moneyness}{option_type}期权（执行价${strike:.2f}，标的${spot_price:.2f}）。深度虚值期权到期归零的概率较高。",
+                    "warning"
+                ))

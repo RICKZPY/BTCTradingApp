@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { StrategyTemplate } from '../../api/types'
+import Step1_TemplateSelection from './Step1_TemplateSelection'
 import Step2_ParameterConfig from './Step2_ParameterConfig'
 import Step3_Confirmation from './Step3_Confirmation'
 
@@ -62,46 +63,127 @@ const StrategyWizard = ({
   }
 
   // 验证步骤
-  const validateStep = (step: WizardStep): boolean => {
+  const validateStep = (step: WizardStep): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = []
+    
     switch (step) {
       case 1:
-        return selectedTemplate !== ''
+        if (!selectedTemplate) {
+          errors.push('请选择一个策略模板')
+        }
+        break
       
       case 2:
         // 基本字段验证
-        if (!formData.expiry_date || !formData.quantity) {
-          return false
+        if (!formData.expiry_date) {
+          errors.push('请选择到期日')
+        } else {
+          // 验证到期日不能是过去的日期
+          const expiryDate = new Date(formData.expiry_date)
+          const today = new Date()
+          today.setHours(0, 0, 0, 0)
+          if (expiryDate < today) {
+            errors.push('到期日不能是过去的日期')
+          }
+        }
+        
+        if (!formData.quantity || parseInt(formData.quantity) < 1) {
+          errors.push('数量必须至少为1')
         }
         
         // 根据策略类型验证执行价
         switch (selectedTemplate) {
           case 'single_leg':
           case 'straddle':
-            return formData.strike !== ''
+            if (!formData.strike) {
+              errors.push('请选择执行价')
+            } else if (parseFloat(formData.strike) <= 0) {
+              errors.push('执行价必须大于0')
+            }
+            break
           
           case 'strangle':
-            return formData.call_strike !== '' && formData.put_strike !== ''
+            if (!formData.call_strike) {
+              errors.push('请选择看涨期权执行价')
+            } else if (parseFloat(formData.call_strike) <= 0) {
+              errors.push('看涨期权执行价必须大于0')
+            }
+            
+            if (!formData.put_strike) {
+              errors.push('请选择看跌期权执行价')
+            } else if (parseFloat(formData.put_strike) <= 0) {
+              errors.push('看跌期权执行价必须大于0')
+            }
+            
+            // 验证宽跨式执行价顺序：看跌执行价应该低于看涨执行价
+            if (formData.call_strike && formData.put_strike) {
+              const callStrike = parseFloat(formData.call_strike)
+              const putStrike = parseFloat(formData.put_strike)
+              if (putStrike >= callStrike) {
+                errors.push('宽跨式策略中，看跌期权执行价应低于看涨期权执行价')
+              }
+            }
+            break
           
           case 'iron_condor':
-            return formData.strikes.every((s: string) => s !== '')
+            if (!formData.strikes.every((s: string) => s !== '')) {
+              errors.push('请选择所有4个执行价')
+            } else {
+              // 验证铁鹰执行价顺序：必须从低到高
+              const strikes = formData.strikes.map((s: string) => parseFloat(s))
+              if (strikes.some((s: number) => s <= 0)) {
+                errors.push('所有执行价必须大于0')
+              } else {
+                for (let i = 0; i < strikes.length - 1; i++) {
+                  if (strikes[i] >= strikes[i + 1]) {
+                    errors.push('铁鹰策略的执行价必须按从低到高的顺序排列')
+                    break
+                  }
+                }
+              }
+            }
+            break
           
           case 'butterfly':
-            return formData.strike !== '' && formData.wing_width !== ''
+            if (!formData.strike) {
+              errors.push('请选择中心执行价')
+            } else if (parseFloat(formData.strike) <= 0) {
+              errors.push('中心执行价必须大于0')
+            }
+            
+            if (!formData.wing_width) {
+              errors.push('请输入翼宽')
+            } else if (parseFloat(formData.wing_width) <= 0) {
+              errors.push('翼宽必须大于0')
+            }
+            break
           
           default:
-            return false
+            errors.push('未知的策略类型')
         }
+        break
       
       case 3:
-        return true
+        // 步骤3没有额外验证，只是确认
+        break
       
       default:
-        return false
+        errors.push('无效的步骤')
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors
     }
   }
 
   const canProceed = () => {
-    return validateStep(currentStep)
+    return validateStep(currentStep).isValid
+  }
+
+  // 获取当前步骤的验证错误
+  const getValidationErrors = () => {
+    return validateStep(currentStep).errors
   }
 
   const getSelectedTemplateName = () => {
@@ -113,15 +195,45 @@ const StrategyWizard = ({
   const getStepHelp = () => {
     switch (currentStep) {
       case 1:
-        return '选择最适合您交易目标和市场预期的策略类型'
+        return {
+          title: '选择策略模板',
+          text: '根据您的市场预期选择合适的期权策略。每个策略都有不同的风险收益特征，适用于不同的市场环境。',
+          tips: [
+            '看涨市场：考虑单腿看涨期权',
+            '高波动预期：考虑跨式或宽跨式策略',
+            '低波动预期：考虑铁鹰或蝶式策略'
+          ]
+        }
       case 2:
-        return '设置策略的具体参数，包括到期日、执行价和数量'
+        return {
+          title: '配置参数',
+          text: '设置策略的具体参数。系统会自动加载实时市场数据帮助您做出决策。',
+          tips: [
+            '到期日：选择符合您交易周期的到期日',
+            '执行价：使用智能选择器查看实时价格和隐含波动率',
+            '数量：根据您的风险承受能力设置合约数量'
+          ]
+        }
       case 3:
-        return '仔细检查策略配置，确认无误后创建'
+        return {
+          title: '确认创建',
+          text: '仔细检查所有参数，确保策略配置符合您的预期。创建后可以随时编辑或删除。',
+          tips: [
+            '检查所有执行价是否正确',
+            '确认到期日和数量',
+            '理解策略的风险特征'
+          ]
+        }
       default:
-        return ''
+        return {
+          title: '',
+          text: '',
+          tips: []
+        }
     }
   }
+
+  const stepHelp = getStepHelp()
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -175,52 +287,39 @@ const StrategyWizard = ({
           </div>
 
           {/* 帮助提示 */}
-          <div className="mt-4 flex items-start gap-2 p-3 bg-accent-blue bg-opacity-10 rounded-lg border border-accent-blue border-opacity-30">
-            <svg className="w-5 h-5 text-accent-blue flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className="text-sm text-accent-blue-light">{getStepHelp()}</p>
+          <div className="mt-4 p-4 bg-accent-blue bg-opacity-10 rounded-lg border border-accent-blue border-opacity-30">
+            <div className="flex items-start gap-3">
+              <svg className="w-5 h-5 text-accent-blue flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="flex-1">
+                <h4 className="text-sm font-semibold text-accent-blue mb-1">{stepHelp.title}</h4>
+                <p className="text-sm text-accent-blue-light mb-2">{stepHelp.text}</p>
+                {stepHelp.tips.length > 0 && (
+                  <ul className="space-y-1 mt-2">
+                    {stepHelp.tips.map((tip, index) => (
+                      <li key={index} className="text-xs text-accent-blue-light flex items-start gap-2">
+                        <svg className="w-3 h-3 text-accent-blue mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 1.414L10.586 9H7a1 1 0 100 2h3.586l-1.293 1.293a1 1 0 101.414 1.414l3-3a1 1 0 000-1.414z" clipRule="evenodd" />
+                        </svg>
+                        <span>{tip}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
         {/* 内容区域 */}
         <div className="flex-1 overflow-y-auto px-6 py-6">
           {currentStep === 1 && (
-            <div>
-              <h3 className="text-lg font-semibold text-text-primary mb-2">
-                选择策略模板
-              </h3>
-              <p className="text-text-secondary text-sm mb-6">
-                选择一个适合您交易目标的期权策略模板
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {templates.map((template) => (
-                  <div
-                    key={template.type}
-                    onClick={() => setSelectedTemplate(template.type)}
-                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                      selectedTemplate === template.type
-                        ? 'border-accent-blue bg-accent-blue bg-opacity-10'
-                        : 'border-text-disabled hover:border-accent-blue hover:border-opacity-50'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <h4 className="text-lg font-semibold text-text-primary">
-                        {template.name}
-                      </h4>
-                      {selectedTemplate === template.type && (
-                        <svg className="w-6 h-6 text-accent-blue" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      )}
-                    </div>
-                    <p className="text-text-secondary text-sm">
-                      {template.description}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <Step1_TemplateSelection
+              templates={templates}
+              selectedTemplate={selectedTemplate}
+              onSelect={setSelectedTemplate}
+            />
           )}
 
           {currentStep === 2 && (
@@ -255,6 +354,27 @@ const StrategyWizard = ({
                 onSubmit={handleComplete}
                 isSubmitting={isSubmitting}
               />
+            </div>
+          )}
+          
+          {/* 验证错误显示 */}
+          {!canProceed() && currentStep !== 3 && (
+            <div className="mt-6 p-4 bg-accent-red bg-opacity-10 border border-accent-red border-opacity-30 rounded-lg">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-accent-red flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="flex-1">
+                  <h4 className="text-sm font-semibold text-accent-red mb-2">请完成以下项目：</h4>
+                  <ul className="space-y-1">
+                    {getValidationErrors().map((error, index) => (
+                      <li key={index} className="text-sm text-accent-red-light">
+                        • {error}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
         </div>

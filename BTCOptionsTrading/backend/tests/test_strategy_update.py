@@ -155,7 +155,8 @@ class TestStrategyUpdateAPI:
         }
         response = test_client.put(f"/api/strategies/{strategy_id}", json=update_data)
         
-        assert response.status_code == 400
+        # FastAPI返回422 (Unprocessable Entity) 用于验证错误
+        assert response.status_code == 422
     
     def test_update_strategy_preserves_other_fields(self, test_client, test_db):
         """测试更新策略时其他字段保持不变"""

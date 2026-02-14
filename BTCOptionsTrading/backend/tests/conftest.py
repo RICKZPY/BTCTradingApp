@@ -19,6 +19,9 @@ from src.api.app import create_app
 from src.config.settings import Settings
 from src.storage.database import DatabaseManager, Base
 
+# 导入所有模型以确保它们被注册到Base.metadata
+from src.storage import models as storage_models
+
 
 @pytest.fixture
 def test_settings():
@@ -36,21 +39,40 @@ def test_settings():
 @pytest.fixture
 def test_db(test_settings):
     """测试数据库会话"""
-    # 创建SQLite内存数据库
-    engine = create_engine("sqlite:///:memory:", poolclass=NullPool)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    import tempfile
+    import os
     
-    # 创建所有表
-    Base.metadata.create_all(bind=engine)
+    # 创建临时数据库文件
+    db_fd, db_path = tempfile.mkstemp(suffix='.db')
     
-    # 创建会话
-    db = SessionLocal()
     try:
-        yield db
+        # 创建SQLite文件数据库
+        engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False},
+            poolclass=NullPool
+        )
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        
+        # 创建所有表
+        Base.metadata.create_all(bind=engine)
+        
+        # 创建会话
+        db = SessionLocal()
+        try:
+            yield db
+            db.commit()  # 确保所有更改都被提交
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+            Base.metadata.drop_all(bind=engine)
+            engine.dispose()
     finally:
-        db.close()
-        Base.metadata.drop_all(bind=engine)
-        engine.dispose()
+        # 清理临时文件
+        os.close(db_fd)
+        os.unlink(db_path)
 
 
 @pytest.fixture
@@ -58,18 +80,22 @@ def test_client(test_settings, test_db):
     """测试客户端"""
     app = create_app(test_settings)
     
-    # 覆盖数据库依赖
+    # 覆盖数据库依赖 - 使用同一个test_db会话
     from src.storage.database import get_db
     
     def override_get_db():
         try:
             yield test_db
         finally:
-            pass
+            pass  # 不要关闭，让test_db fixture管理生命周期
     
     app.dependency_overrides[get_db] = override_get_db
     
-    return TestClient(app)
+    client = TestClient(app)
+    yield client
+    
+    # 清理
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
