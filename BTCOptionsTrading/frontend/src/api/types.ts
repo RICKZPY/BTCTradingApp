@@ -114,3 +114,35 @@ export interface StrategyTemplate {
   }
   key_features?: string[]
 }
+
+export interface ValidationError {
+  field: string
+  message: string
+}
+
+export interface ValidationWarning {
+  field: string
+  message: string
+}
+
+export interface ValidationResult {
+  is_valid: boolean
+  errors: ValidationError[]
+  warnings: ValidationWarning[]
+}
+
+export interface RiskMetrics {
+  greeks: {
+    delta: number
+    gamma: number
+    theta: number
+    vega: number
+    rho: number
+  }
+  initial_cost: number
+  max_profit: number
+  max_loss: number
+  breakeven_points: number[]
+  risk_reward_ratio: number
+  probability_of_profit?: number
+}

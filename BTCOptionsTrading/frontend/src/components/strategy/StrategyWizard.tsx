@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import type { StrategyTemplate } from '../../api/types'
+import { useState, useEffect } from 'react'
+import type { StrategyTemplate, ValidationResult, RiskMetrics } from '../../api/types'
+import { strategiesApi } from '../../api/strategies'
 import Step1_TemplateSelection from './Step1_TemplateSelection'
 import Step2_ParameterConfig from './Step2_ParameterConfig'
 import Step3_Confirmation from './Step3_Confirmation'
@@ -35,8 +36,238 @@ const StrategyWizard = ({
     strikes: ['', '', '', ''],
     wing_width: ''
   })
+  
+  // 验证和风险计算状态
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
+  const [riskMetrics, setRiskMetrics] = useState<RiskMetrics | null>(null)
+  const [isValidating, setIsValidating] = useState(false)
+  const [isCalculatingRisk, setIsCalculatingRisk] = useState(false)
 
   if (!isOpen) return null
+
+  // 构建策略腿数据
+  const buildStrategyLegs = () => {
+    const legs: any[] = []
+    const quantity = parseInt(formData.quantity) || 1
+    const expiryDate = new Date(formData.expiry_date)
+
+    switch (selectedTemplate) {
+      case 'single_leg':
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.strike}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: parseFloat(formData.strike),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        break
+
+      case 'straddle':
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.strike}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: parseFloat(formData.strike),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.strike}-P`,
+            underlying: 'BTC',
+            option_type: 'put',
+            strike_price: parseFloat(formData.strike),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        break
+
+      case 'strangle':
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.call_strike}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: parseFloat(formData.call_strike),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.put_strike}-P`,
+            underlying: 'BTC',
+            option_type: 'put',
+            strike_price: parseFloat(formData.put_strike),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        break
+
+      case 'iron_condor':
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.strikes[0]}-P`,
+            underlying: 'BTC',
+            option_type: 'put',
+            strike_price: parseFloat(formData.strikes[0]),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.strikes[1]}-P`,
+            underlying: 'BTC',
+            option_type: 'put',
+            strike_price: parseFloat(formData.strikes[1]),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'sell',
+          quantity
+        })
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.strikes[2]}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: parseFloat(formData.strikes[2]),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'sell',
+          quantity
+        })
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${formData.strikes[3]}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: parseFloat(formData.strikes[3]),
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        break
+
+      case 'butterfly':
+        const centerStrike = parseFloat(formData.strike)
+        const wingWidth = parseFloat(formData.wing_width)
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${centerStrike - wingWidth}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: centerStrike - wingWidth,
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${centerStrike}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: centerStrike,
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'sell',
+          quantity: quantity * 2
+        })
+        legs.push({
+          option_contract: {
+            instrument_name: `BTC-${formData.expiry_date}-${centerStrike + wingWidth}-C`,
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: centerStrike + wingWidth,
+            expiration_date: expiryDate.toISOString()
+          },
+          action: 'buy',
+          quantity
+        })
+        break
+    }
+
+    return legs
+  }
+
+  // 调用后端验证API
+  const validateStrategy = async () => {
+    if (!selectedTemplate || !formData.expiry_date) {
+      return
+    }
+
+    try {
+      setIsValidating(true)
+      const legs = buildStrategyLegs()
+      
+      const result = await strategiesApi.validate({
+        name: formData.name,
+        strategy_type: selectedTemplate,
+        legs,
+        initial_capital: 100000
+      })
+      
+      setValidationResult(result)
+    } catch (error) {
+      console.error('验证失败:', error)
+      setValidationResult({
+        is_valid: false,
+        errors: [{ field: 'general', message: '验证服务暂时不可用' }],
+        warnings: []
+      })
+    } finally {
+      setIsValidating(false)
+    }
+  }
+
+  // 调用后端风险计算API
+  const calculateRisk = async () => {
+    if (!selectedTemplate || !formData.expiry_date || !underlyingPrice) {
+      return
+    }
+
+    try {
+      setIsCalculatingRisk(true)
+      const legs = buildStrategyLegs()
+      
+      const metrics = await strategiesApi.calculateRisk({
+        legs,
+        spot_price: underlyingPrice,
+        risk_free_rate: 0.05,
+        volatility: 0.8
+      })
+      
+      setRiskMetrics(metrics)
+    } catch (error) {
+      console.error('风险计算失败:', error)
+      setRiskMetrics(null)
+    } finally {
+      setIsCalculatingRisk(false)
+    }
+  }
+
+  // 当进入步骤3时，触发验证和风险计算
+  useEffect(() => {
+    if (currentStep === 3) {
+      validateStrategy()
+      calculateRisk()
+    }
+  }, [currentStep])
 
   const handleNext = () => {
     if (currentStep < 3 && canProceed()) {
@@ -353,6 +584,10 @@ const StrategyWizard = ({
                 templateName={getSelectedTemplateName()}
                 onSubmit={handleComplete}
                 isSubmitting={isSubmitting}
+                validationResult={validationResult}
+                riskMetrics={riskMetrics}
+                isValidating={isValidating}
+                isCalculatingRisk={isCalculatingRisk}
               />
             </div>
           )}
