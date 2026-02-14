@@ -373,34 +373,99 @@ async def list_strategy_templates():
     获取策略模板列表
     
     Returns:
-        策略模板列表
+        策略模板列表，包含详细描述、适用场景和风险特征
     """
     return {
         "templates": [
             {
                 "type": "single_leg",
                 "name": "单腿期权",
-                "description": "买入或卖出单个期权合约"
+                "description": "买入或卖出单个期权合约",
+                "detailed_description": "最基础的期权策略，通过买入或卖出单个看涨或看跌期权来获利。适合对市场方向有明确判断的交易者。",
+                "market_condition": "明确的方向性市场",
+                "risk_profile": {
+                    "max_profit": "买入期权：无限（看涨）或有限（看跌）；卖出期权：权利金",
+                    "max_loss": "买入期权：权利金；卖出期权：无限（看涨）或有限（看跌）",
+                    "breakeven": "执行价 ± 权利金"
+                },
+                "key_features": [
+                    "最简单的期权策略",
+                    "资金需求较小",
+                    "风险收益比明确",
+                    "适合初学者"
+                ]
             },
             {
                 "type": "straddle",
                 "name": "跨式策略",
-                "description": "同时买入/卖出相同执行价的看涨和看跌期权"
+                "description": "同时买入/卖出相同执行价的看涨和看跌期权",
+                "detailed_description": "通过同时买入相同执行价的看涨和看跌期权，在市场大幅波动时获利，无论涨跌方向。适合预期市场将出现重大波动但方向不确定的情况。",
+                "market_condition": "预期高波动，方向不明",
+                "risk_profile": {
+                    "max_profit": "买入跨式：理论无限；卖出跨式：双倍权利金",
+                    "max_loss": "买入跨式：双倍权利金；卖出跨式：理论无限",
+                    "breakeven": "执行价 ± 总权利金"
+                },
+                "key_features": [
+                    "双向获利机会",
+                    "适合重大事件前布局",
+                    "需要较大价格波动",
+                    "时间价值衰减影响大"
+                ]
             },
             {
                 "type": "strangle",
                 "name": "宽跨式策略",
-                "description": "买入/卖出不同执行价的看涨和看跌期权"
+                "description": "买入/卖出不同执行价的看涨和看跌期权",
+                "detailed_description": "类似跨式策略，但使用不同执行价的期权，成本更低但需要更大的价格波动才能获利。适合预期市场将大幅波动的情况。",
+                "market_condition": "预期极高波动",
+                "risk_profile": {
+                    "max_profit": "买入宽跨式：理论无限；卖出宽跨式：双倍权利金",
+                    "max_loss": "买入宽跨式：双倍权利金；卖出宽跨式：理论无限",
+                    "breakeven": "看涨执行价 + 总权利金 或 看跌执行价 - 总权利金"
+                },
+                "key_features": [
+                    "成本低于跨式策略",
+                    "需要更大波动才能获利",
+                    "风险收益比更优",
+                    "适合预算有限的交易者"
+                ]
             },
             {
                 "type": "iron_condor",
                 "name": "铁鹰策略",
-                "description": "四腿复合策略，适合低波动市场"
+                "description": "四腿复合策略，适合低波动市场",
+                "detailed_description": "通过卖出宽跨式并买入更远的期权进行保护，在价格区间内获利。适合预期市场将在一定范围内波动的情况。",
+                "market_condition": "低波动，区间震荡",
+                "risk_profile": {
+                    "max_profit": "净权利金收入",
+                    "max_loss": "价差宽度 - 净权利金",
+                    "breakeven": "上下执行价 ± 净权利金"
+                },
+                "key_features": [
+                    "有限风险有限收益",
+                    "适合震荡市场",
+                    "胜率较高",
+                    "需要精确的风险管理"
+                ]
             },
             {
                 "type": "butterfly",
                 "name": "蝶式策略",
-                "description": "三腿价差策略，适合预期价格不变"
+                "description": "三腿价差策略，适合预期价格不变",
+                "detailed_description": "通过买入两个不同执行价的期权并卖出两倍数量的中间执行价期权，在价格接近中间执行价时获得最大收益。",
+                "market_condition": "预期价格稳定在特定水平",
+                "risk_profile": {
+                    "max_profit": "中间执行价与边缘执行价的差 - 净成本",
+                    "max_loss": "净成本（权利金）",
+                    "breakeven": "中间执行价 ± 净成本"
+                },
+                "key_features": [
+                    "风险有限",
+                    "成本较低",
+                    "适合预期价格不变",
+                    "收益集中在特定价格区间"
+                ]
             }
         ]
     }

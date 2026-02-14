@@ -105,4 +105,12 @@ export interface StrategyTemplate {
   type: string
   name: string
   description: string
+  detailed_description?: string
+  market_condition?: string
+  risk_profile?: {
+    max_profit: string
+    max_loss: string
+    breakeven: string
+  }
+  key_features?: string[]
 }
