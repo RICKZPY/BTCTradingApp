@@ -74,13 +74,37 @@ const StrategyDetailModal = ({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="策略详情" size="lg">
       <div className="space-y-6">
+        {/* 复制策略提示 */}
+        {strategy.name.includes('(副本)') && (
+          <div className="bg-accent-blue bg-opacity-10 border border-accent-blue border-opacity-30 rounded-lg p-3">
+            <div className="flex items-start gap-3">
+              <svg className="w-5 h-5 text-accent-blue flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-accent-blue">这是一个复制的策略</p>
+                <p className="text-xs text-accent-blue-light mt-1">
+                  此策略是通过复制功能创建的，包含了原策略的所有参数配置。
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 基本信息 */}
         <div className="bg-bg-secondary rounded-lg p-4">
           <h3 className="text-lg font-semibold text-text-primary mb-4">基本信息</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-text-secondary mb-1">策略名称</p>
-              <p className="text-base text-text-primary font-medium">{strategy.name}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-base text-text-primary font-medium">{strategy.name}</p>
+                {strategy.name.includes('(副本)') && (
+                  <span className="text-xs px-2 py-0.5 bg-accent-blue bg-opacity-20 text-accent-blue rounded border border-accent-blue border-opacity-30">
+                    副本
+                  </span>
+                )}
+              </div>
             </div>
             <div>
               <p className="text-sm text-text-secondary mb-1">策略类型</p>

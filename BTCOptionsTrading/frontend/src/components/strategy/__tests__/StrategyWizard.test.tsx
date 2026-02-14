@@ -426,3 +426,451 @@ describe('StrategyWizard - Step Validation', () => {
     })
   })
 })
+
+// Property-based tests for strategy copy functionality
+describe('Strategy Copy - Property-based Tests', () => {
+  // Helper to create a mock strategy
+  const createMockStrategy = (type: string, overrides?: any) => {
+    const baseStrategy = {
+      id: 'test-id',
+      name: 'Test Strategy',
+      description: 'Test description',
+      strategy_type: type,
+      created_at: new Date().toISOString(),
+      legs: [],
+      max_profit: 1000,
+      max_loss: -500,
+      ...overrides
+    }
+
+    // Add legs based on strategy type
+    const futureDate = new Date()
+    futureDate.setDate(futureDate.getDate() + 30)
+    const expirationDate = futureDate.toISOString()
+
+    switch (type) {
+      case 'single_leg':
+        baseStrategy.legs = [{
+          option_contract: {
+            instrument_name: 'BTC-2024-12-31-45000-C',
+            underlying: 'BTC',
+            option_type: 'call',
+            strike_price: 45000,
+            expiration_date: expirationDate
+          },
+          action: 'buy',
+          quantity: 1
+        }]
+        break
+
+      case 'straddle':
+        baseStrategy.legs = [
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-45000-C',
+              underlying: 'BTC',
+              option_type: 'call',
+              strike_price: 45000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          },
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-45000-P',
+              underlying: 'BTC',
+              option_type: 'put',
+              strike_price: 45000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          }
+        ]
+        break
+
+      case 'strangle':
+        baseStrategy.legs = [
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-46000-C',
+              underlying: 'BTC',
+              option_type: 'call',
+              strike_price: 46000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          },
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-44000-P',
+              underlying: 'BTC',
+              option_type: 'put',
+              strike_price: 44000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          }
+        ]
+        break
+
+      case 'iron_condor':
+        baseStrategy.legs = [
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-43000-P',
+              underlying: 'BTC',
+              option_type: 'put',
+              strike_price: 43000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          },
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-44000-P',
+              underlying: 'BTC',
+              option_type: 'put',
+              strike_price: 44000,
+              expiration_date: expirationDate
+            },
+            action: 'sell',
+            quantity: 1
+          },
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-46000-C',
+              underlying: 'BTC',
+              option_type: 'call',
+              strike_price: 46000,
+              expiration_date: expirationDate
+            },
+            action: 'sell',
+            quantity: 1
+          },
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-47000-C',
+              underlying: 'BTC',
+              option_type: 'call',
+              strike_price: 47000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          }
+        ]
+        break
+
+      case 'butterfly':
+        baseStrategy.legs = [
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-43000-C',
+              underlying: 'BTC',
+              option_type: 'call',
+              strike_price: 43000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          },
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-45000-C',
+              underlying: 'BTC',
+              option_type: 'call',
+              strike_price: 45000,
+              expiration_date: expirationDate
+            },
+            action: 'sell',
+            quantity: 2
+          },
+          {
+            option_contract: {
+              instrument_name: 'BTC-2024-12-31-47000-C',
+              underlying: 'BTC',
+              option_type: 'call',
+              strike_price: 47000,
+              expiration_date: expirationDate
+            },
+            action: 'buy',
+            quantity: 1
+          }
+        ]
+        break
+    }
+
+    return baseStrategy
+  }
+
+  // Simulate the copy logic from StrategiesTab
+  const simulateCopy = (strategy: any) => {
+    const legs = strategy.legs || []
+    
+    const newFormData: any = {
+      name: `${strategy.name} (副本)`,
+      description: strategy.description || '',
+      quantity: legs.length > 0 ? legs[0].quantity.toString() : '1',
+      expiry_date: '',
+      strike: '',
+      call_strike: '',
+      put_strike: '',
+      strikes: ['', '', '', ''],
+      wing_width: ''
+    }
+
+    // Extract expiry date from first leg
+    if (legs.length > 0 && legs[0].option_contract) {
+      const expiryDate = new Date(legs[0].option_contract.expiration_date)
+      newFormData.expiry_date = expiryDate.toISOString().split('T')[0]
+    }
+
+    // Extract strikes based on strategy type
+    switch (strategy.strategy_type) {
+      case 'single_leg':
+        if (legs.length > 0) {
+          newFormData.strike = legs[0].option_contract.strike_price.toString()
+        }
+        break
+      
+      case 'straddle':
+        if (legs.length > 0) {
+          newFormData.strike = legs[0].option_contract.strike_price.toString()
+        }
+        break
+      
+      case 'strangle':
+        if (legs.length >= 2) {
+          const callLeg = legs.find((leg: any) => leg.option_contract.option_type === 'call')
+          const putLeg = legs.find((leg: any) => leg.option_contract.option_type === 'put')
+          if (callLeg) newFormData.call_strike = callLeg.option_contract.strike_price.toString()
+          if (putLeg) newFormData.put_strike = putLeg.option_contract.strike_price.toString()
+        }
+        break
+      
+      case 'iron_condor':
+        if (legs.length >= 4) {
+          const sortedLegs = [...legs].sort((a: any, b: any) => 
+            a.option_contract.strike_price - b.option_contract.strike_price
+          )
+          newFormData.strikes = sortedLegs.map((leg: any) => 
+            leg.option_contract.strike_price.toString()
+          )
+        }
+        break
+      
+      case 'butterfly':
+        if (legs.length >= 3) {
+          const centerLeg = legs.find((leg: any) => leg.action === 'sell')
+          if (centerLeg) {
+            newFormData.strike = centerLeg.option_contract.strike_price.toString()
+            const buyLegs = legs.filter((leg: any) => leg.action === 'buy')
+            if (buyLegs.length >= 2) {
+              const wingWidth = Math.abs(
+                buyLegs[0].option_contract.strike_price - centerLeg.option_contract.strike_price
+              )
+              newFormData.wing_width = wingWidth.toString()
+            }
+          }
+        }
+        break
+    }
+
+    return {
+      selectedTemplate: strategy.strategy_type,
+      formData: newFormData
+    }
+  }
+
+  // Property 9: Strategy Copy Integrity
+  // Verifies that all essential parameters are preserved when copying a strategy
+  describe('Property 9: Strategy Copy Integrity', () => {
+    const strategyTypes = ['single_leg', 'straddle', 'strangle', 'iron_condor', 'butterfly']
+
+    strategyTypes.forEach(strategyType => {
+      describe(`${strategyType} strategy`, () => {
+        it('should preserve all leg configurations', () => {
+          const originalStrategy = createMockStrategy(strategyType)
+          const copyData = simulateCopy(originalStrategy)
+
+          // Verify template is preserved
+          expect(copyData.selectedTemplate).toBe(originalStrategy.strategy_type)
+
+          // Verify name has "(副本)" suffix
+          expect(copyData.formData.name).toBe(`${originalStrategy.name} (副本)`)
+
+          // Verify description is preserved
+          expect(copyData.formData.description).toBe(originalStrategy.description)
+
+          // Verify quantity is preserved
+          expect(copyData.formData.quantity).toBe(originalStrategy.legs[0].quantity.toString())
+
+          // Verify expiry date is extracted
+          expect(copyData.formData.expiry_date).toBeTruthy()
+          expect(copyData.formData.expiry_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+        })
+
+        it('should preserve strike prices correctly', () => {
+          const originalStrategy = createMockStrategy(strategyType)
+          const copyData = simulateCopy(originalStrategy)
+
+          switch (strategyType) {
+            case 'single_leg':
+            case 'straddle':
+              expect(copyData.formData.strike).toBe(
+                originalStrategy.legs[0].option_contract.strike_price.toString()
+              )
+              break
+
+            case 'strangle':
+              const callLeg = originalStrategy.legs.find((leg: any) => 
+                leg.option_contract.option_type === 'call'
+              )
+              const putLeg = originalStrategy.legs.find((leg: any) => 
+                leg.option_contract.option_type === 'put'
+              )
+              expect(copyData.formData.call_strike).toBe(
+                callLeg.option_contract.strike_price.toString()
+              )
+              expect(copyData.formData.put_strike).toBe(
+                putLeg.option_contract.strike_price.toString()
+              )
+              break
+
+            case 'iron_condor':
+              const sortedStrikes = originalStrategy.legs
+                .map((leg: any) => leg.option_contract.strike_price)
+                .sort((a: number, b: number) => a - b)
+              expect(copyData.formData.strikes).toEqual(
+                sortedStrikes.map((s: number) => s.toString())
+              )
+              break
+
+            case 'butterfly':
+              const centerLeg = originalStrategy.legs.find((leg: any) => leg.action === 'sell')
+              expect(copyData.formData.strike).toBe(
+                centerLeg.option_contract.strike_price.toString()
+              )
+              const buyLegs = originalStrategy.legs.filter((leg: any) => leg.action === 'buy')
+              const expectedWingWidth = Math.abs(
+                buyLegs[0].option_contract.strike_price - centerLeg.option_contract.strike_price
+              )
+              expect(copyData.formData.wing_width).toBe(expectedWingWidth.toString())
+              break
+          }
+        })
+
+        it('should create valid form data that passes validation', () => {
+          const originalStrategy = createMockStrategy(strategyType)
+          const copyData = simulateCopy(originalStrategy)
+
+          // Validate the copied data using the wizard validation
+          const validationResult = validateStep(
+            2,
+            copyData.selectedTemplate,
+            copyData.formData
+          )
+
+          expect(validationResult.isValid).toBe(true)
+          expect(validationResult.errors).toHaveLength(0)
+        })
+      })
+    })
+
+    // Test with different quantities
+    it('should preserve quantity for all strategy types', () => {
+      const quantities = [1, 2, 5, 10]
+      
+      quantities.forEach(quantity => {
+        strategyTypes.forEach(strategyType => {
+          const originalStrategy = createMockStrategy(strategyType, {
+            legs: createMockStrategy(strategyType).legs.map((leg: any) => ({
+              ...leg,
+              quantity
+            }))
+          })
+          
+          const copyData = simulateCopy(originalStrategy)
+          expect(copyData.formData.quantity).toBe(quantity.toString())
+        })
+      })
+    })
+
+    // Test that copy doesn't modify original strategy
+    it('should not modify the original strategy', () => {
+      const originalStrategy = createMockStrategy('straddle')
+      const originalStrategyCopy = JSON.parse(JSON.stringify(originalStrategy))
+      
+      simulateCopy(originalStrategy)
+      
+      // Verify original strategy is unchanged
+      expect(originalStrategy).toEqual(originalStrategyCopy)
+    })
+
+    // Test edge cases
+    describe('Edge cases', () => {
+      it('should handle strategy with empty description', () => {
+        const strategy = createMockStrategy('straddle', { description: '' })
+        const copyData = simulateCopy(strategy)
+        
+        expect(copyData.formData.description).toBe('')
+      })
+
+      it('should handle strategy with no legs gracefully', () => {
+        const strategy = createMockStrategy('straddle', { legs: [] })
+        const copyData = simulateCopy(strategy)
+        
+        expect(copyData.formData.quantity).toBe('1') // Default quantity
+        expect(copyData.formData.expiry_date).toBe('') // No expiry date
+      })
+
+      it('should handle strategy with special characters in name', () => {
+        const specialName = 'Test Strategy (v2) - 测试'
+        const strategy = createMockStrategy('straddle', { name: specialName })
+        const copyData = simulateCopy(strategy)
+        
+        expect(copyData.formData.name).toBe(`${specialName} (副本)`)
+      })
+    })
+
+    // Test completeness - ensure no data loss
+    describe('Data completeness', () => {
+      it('should extract all required fields for each strategy type', () => {
+        strategyTypes.forEach(strategyType => {
+          const originalStrategy = createMockStrategy(strategyType)
+          const copyData = simulateCopy(originalStrategy)
+
+          // Check that all required fields are populated
+          expect(copyData.selectedTemplate).toBeTruthy()
+          expect(copyData.formData.name).toBeTruthy()
+          expect(copyData.formData.quantity).toBeTruthy()
+          expect(copyData.formData.expiry_date).toBeTruthy()
+
+          // Check strategy-specific fields
+          switch (strategyType) {
+            case 'single_leg':
+            case 'straddle':
+              expect(copyData.formData.strike).toBeTruthy()
+              break
+            case 'strangle':
+              expect(copyData.formData.call_strike).toBeTruthy()
+              expect(copyData.formData.put_strike).toBeTruthy()
+              break
+            case 'iron_condor':
+              expect(copyData.formData.strikes.every((s: string) => s !== '')).toBe(true)
+              break
+            case 'butterfly':
+              expect(copyData.formData.strike).toBeTruthy()
+              expect(copyData.formData.wing_width).toBeTruthy()
+              break
+          }
+        })
+      })
+    })
+  })
+})

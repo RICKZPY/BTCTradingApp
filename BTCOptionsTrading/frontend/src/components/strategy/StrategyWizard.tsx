@@ -11,6 +11,10 @@ interface StrategyWizardProps {
   onComplete: (strategyData: any) => void
   templates: StrategyTemplate[]
   underlyingPrice: number
+  initialData?: {
+    selectedTemplate?: string
+    formData?: any
+  }
 }
 
 type WizardStep = 1 | 2 | 3
@@ -20,12 +24,13 @@ const StrategyWizard = ({
   onClose, 
   onComplete, 
   templates,
-  underlyingPrice 
+  underlyingPrice,
+  initialData
 }: StrategyWizardProps) => {
   const [currentStep, setCurrentStep] = useState<WizardStep>(1)
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('')
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(initialData?.selectedTemplate || '')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [formData, setFormData] = useState<any>({
+  const [formData, setFormData] = useState<any>(initialData?.formData || {
     name: '',
     description: '',
     expiry_date: '',
@@ -42,6 +47,32 @@ const StrategyWizard = ({
   const [riskMetrics, setRiskMetrics] = useState<RiskMetrics | null>(null)
   const [isValidating, setIsValidating] = useState(false)
   const [isCalculatingRisk, setIsCalculatingRisk] = useState(false)
+
+  // 当有初始数据时，直接跳到步骤2
+  useEffect(() => {
+    if (isOpen && initialData?.selectedTemplate) {
+      setCurrentStep(2)
+      setSelectedTemplate(initialData.selectedTemplate)
+      if (initialData.formData) {
+        setFormData(initialData.formData)
+      }
+    } else if (isOpen) {
+      // 重置状态
+      setCurrentStep(1)
+      setSelectedTemplate('')
+      setFormData({
+        name: '',
+        description: '',
+        expiry_date: '',
+        quantity: '1',
+        strike: '',
+        call_strike: '',
+        put_strike: '',
+        strikes: ['', '', '', ''],
+        wing_width: ''
+      })
+    }
+  }, [isOpen, initialData])
 
   if (!isOpen) return null
 

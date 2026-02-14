@@ -22,6 +22,10 @@ const StrategiesTab = () => {
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [copyInitialData, setCopyInitialData] = useState<{
+    selectedTemplate?: string
+    formData?: any
+  } | undefined>(undefined)
   const { setError, setSuccessMessage } = useAppStore()
 
   // 期权链数据状态
@@ -429,18 +433,15 @@ const StrategiesTab = () => {
         break
     }
 
-    // 设置表单数据和模板
-    setFormData(newFormData)
-    setSelectedTemplate(strategy.strategy_type)
-    
-    // 关闭详情模态框，打开创建模态框
+    // 关闭详情模态框，打开向导并传递初始数据
     setIsDetailModalOpen(false)
-    setIsCreateModalOpen(true)
+    setIsWizardOpen(true)
     
-    // 如果有到期日，加载期权链数据
-    if (newFormData.expiry_date) {
-      loadOptionsChain(newFormData.expiry_date)
-    }
+    // 设置向导的初始数据（通过state传递）
+    setCopyInitialData({
+      selectedTemplate: strategy.strategy_type,
+      formData: newFormData
+    })
   }
 
   // 重置表单
@@ -895,7 +896,14 @@ const StrategiesTab = () => {
               >
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <h4 className="text-lg font-semibold text-text-primary">{strategy.name}</h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-lg font-semibold text-text-primary">{strategy.name}</h4>
+                      {strategy.name.includes('(副本)') && (
+                        <span className="text-xs px-2 py-0.5 bg-accent-blue bg-opacity-20 text-accent-blue rounded border border-accent-blue border-opacity-30">
+                          复制策略
+                        </span>
+                      )}
+                    </div>
                     {strategy.description && (
                       <p className="text-text-secondary text-sm mt-1">{strategy.description}</p>
                     )}
@@ -1204,10 +1212,14 @@ const StrategiesTab = () => {
       {/* 策略创建向导 */}
       <StrategyWizard
         isOpen={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
+        onClose={() => {
+          setIsWizardOpen(false)
+          setCopyInitialData(undefined)
+        }}
         onComplete={handleWizardComplete}
         templates={templates}
         underlyingPrice={underlyingPrice}
+        initialData={copyInitialData}
       />
     </div>
   )
