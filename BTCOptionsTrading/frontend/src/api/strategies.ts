@@ -22,6 +22,12 @@ export const strategiesApi = {
     return response.data
   },
 
+  // 更新策略
+  update: async (id: string, data: Partial<CreateStrategyRequest>): Promise<Strategy> => {
+    const response = await apiClient.put(`/api/strategies/${id}`, data)
+    return response.data
+  },
+
   // 删除策略
   delete: async (id: string): Promise<void> => {
     await apiClient.delete(`/api/strategies/${id}`)

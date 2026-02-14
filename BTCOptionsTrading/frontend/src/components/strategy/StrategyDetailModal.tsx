@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react'
 import Modal from '../Modal'
 import type { Strategy } from '../../api/types'
 

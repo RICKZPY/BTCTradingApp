@@ -15,9 +15,9 @@ export const dataApi = {
   },
 
   // 获取期权链
-  getOptionsChain: async (currency = 'BTC', kind = 'option'): Promise<any[]> => {
+  getOptionsChain: async (currency = 'BTC'): Promise<any[]> => {
     const response = await apiClient.get('/api/data/options-chain', {
-      params: { currency, kind },
+      params: { currency },
     })
     return response.data
   },

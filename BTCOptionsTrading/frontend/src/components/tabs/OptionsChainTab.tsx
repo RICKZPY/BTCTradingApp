@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import { dataApi } from '../../api/data'
-import { useAppStore } from '../../store/useAppStore'
 import LoadingSpinner from '../LoadingSpinner'
 
 interface OptionChainData {
@@ -35,7 +34,6 @@ const OptionsChainTab = () => {
   const [underlyingPrice, setUnderlyingPrice] = useState<number>(0)
   const [isLoading, setIsLoading] = useState(false)
   const [showGreeks, setShowGreeks] = useState(false)
-  const { setError } = useAppStore()
 
   // 生成到期日列表（未来3个月的每周五）
   const generateExpiryDates = () => {
@@ -77,8 +75,25 @@ const OptionsChainTab = () => {
 
     try {
       setIsLoading(true)
-      const data = await dataApi.getOptionsChain(currency, expiryDate)
-      setOptionsData(data)
+      // 调用后端API获取期权链数据
+      const rawData = await dataApi.getOptionsChain(currency)
+      
+      // 将后端返回的数据转换为前端格式
+      const processedData = processOptionsChainData(rawData, expiryDate)
+      
+      // 检查数据是否有效（是否有定价数据）
+      const hasValidPricing = processedData.some(option => 
+        (option.call.price > 0 || option.put.price > 0)
+      )
+      
+      if (processedData.length > 0 && hasValidPricing) {
+        // 有数据且有定价，使用真实数据
+        setOptionsData(processedData)
+      } else {
+        // 没有数据或没有定价，使用模拟数据
+        console.log('No valid pricing data from API, using mock data')
+        generateMockData()
+      }
     } catch (error) {
       console.error('加载期权链失败:', error)
       // 使用模拟数据
@@ -86,6 +101,64 @@ const OptionsChainTab = () => {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // 处理后端返回的期权链数据
+  const processOptionsChainData = (rawData: any[], targetExpiryDate: string): OptionChainData[] => {
+    // 按执行价分组
+    const strikeMap = new Map<number, { call?: any; put?: any }>()
+    
+    // 过滤指定到期日的期权
+    const targetDate = new Date(targetExpiryDate).toISOString().split('T')[0]
+    
+    rawData.forEach((option: any) => {
+      // 检查到期日是否匹配
+      const optionDate = new Date(option.expiration_date || option.expiration_timestamp * 1000)
+        .toISOString().split('T')[0]
+      
+      if (optionDate !== targetDate) return
+      
+      const strike = option.strike || option.strike_price
+      if (!strike) return
+      
+      if (!strikeMap.has(strike)) {
+        strikeMap.set(strike, {})
+      }
+      
+      const strikeData = strikeMap.get(strike)!
+      const optionData = {
+        price: option.mark_price || option.last_price || option.current_price || 0,
+        iv: option.implied_volatility || option.mark_iv || 0,
+        delta: option.delta || (option.greeks && option.greeks.delta) || 0,
+        gamma: option.gamma || (option.greeks && option.greeks.gamma) || 0,
+        theta: option.theta || (option.greeks && option.greeks.theta) || 0,
+        vega: option.vega || (option.greeks && option.greeks.vega) || 0,
+        volume: option.volume || (option.stats && option.stats.volume) || 0,
+        openInterest: option.open_interest || 0
+      }
+      
+      if (option.option_type === 'call' || option.option_type === 'C') {
+        strikeData.call = optionData
+      } else if (option.option_type === 'put' || option.option_type === 'P') {
+        strikeData.put = optionData
+      }
+    })
+    
+    // 转换为数组并排序
+    const result: OptionChainData[] = []
+    Array.from(strikeMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .forEach(([strike, data]) => {
+        if (data.call && data.put) {
+          result.push({
+            strike,
+            call: data.call,
+            put: data.put
+          })
+        }
+      })
+    
+    return result
   }
 
   // 生成模拟数据（使用Black-Scholes模型）

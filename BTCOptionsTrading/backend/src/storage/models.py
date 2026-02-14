@@ -166,3 +166,45 @@ class UnderlyingPriceHistoryModel(Base):
     volatility_30d = Column(Float)
     volatility_60d = Column(Float)
     volatility_90d = Column(Float)
+
+
+class HistoricalOptionDataModel(Base):
+    """历史期权数据表"""
+    __tablename__ = "historical_option_data"
+    
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    instrument_name = Column(String(50), nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    open_price = Column(DECIMAL(20, 8), nullable=False)
+    high_price = Column(DECIMAL(20, 8), nullable=False)
+    low_price = Column(DECIMAL(20, 8), nullable=False)
+    close_price = Column(DECIMAL(20, 8), nullable=False)
+    volume = Column(DECIMAL(20, 8), nullable=False)
+    strike_price = Column(DECIMAL(20, 8), nullable=False)
+    expiry_date = Column(DateTime, nullable=False, index=True)
+    option_type = Column(String(10), nullable=False)
+    underlying_symbol = Column(String(10), nullable=False)
+    data_source = Column(String(50), default='CryptoDataDownload')
+    created_at = Column(DateTime, default=datetime.now)
+    
+    # 唯一约束：同一期权合约在同一时间只能有一条记录
+    __table_args__ = (
+        {'sqlite_autoincrement': True},
+    )
+
+
+class DataImportLogModel(Base):
+    """数据导入日志表"""
+    __tablename__ = "data_import_log"
+    
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    expiry_date = Column(DateTime, nullable=False, index=True)
+    import_date = Column(DateTime, nullable=False, default=datetime.now)
+    records_imported = Column(Integer, nullable=False, default=0)
+    records_failed = Column(Integer, nullable=False, default=0)
+    file_source = Column(String(255))
+    status = Column(String(20), nullable=False)  # pending, in_progress, completed, failed, partial
+    error_message = Column(Text)
+    import_duration_seconds = Column(Float)
+    quality_score = Column(Float)
+    created_at = Column(DateTime, default=datetime.now)

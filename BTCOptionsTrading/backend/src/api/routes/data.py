@@ -114,22 +114,23 @@ async def get_options_chain(
         
         result = []
         for option in options_data:
+            # option 是 OptionContract 对象，不是字典
             result.append(OptionChainResponse(
-                instrument_name=option.get("instrument_name", ""),
-                strike=option.get("strike", 0),
-                option_type=option.get("option_type", ""),
-                expiration_timestamp=option.get("expiration_timestamp", 0),
-                bid_price=option.get("bid_price"),
-                ask_price=option.get("ask_price"),
-                last_price=option.get("last_price"),
-                mark_price=option.get("mark_price"),
-                implied_volatility=option.get("mark_iv"),
-                delta=option.get("greeks", {}).get("delta"),
-                gamma=option.get("greeks", {}).get("gamma"),
-                theta=option.get("greeks", {}).get("theta"),
-                vega=option.get("greeks", {}).get("vega"),
-                volume=option.get("stats", {}).get("volume"),
-                open_interest=option.get("open_interest")
+                instrument_name=option.instrument_name,
+                strike=float(option.strike_price),
+                option_type=option.option_type.value,  # OptionType enum
+                expiration_timestamp=int(option.expiration_date.timestamp()),
+                bid_price=float(option.bid_price) if option.bid_price else None,
+                ask_price=float(option.ask_price) if option.ask_price else None,
+                last_price=float(option.last_price) if option.last_price else None,
+                mark_price=float(option.current_price) if option.current_price else None,
+                implied_volatility=option.implied_volatility,
+                delta=option.delta,
+                gamma=option.gamma,
+                theta=option.theta,
+                vega=option.vega,
+                volume=option.volume,
+                open_interest=option.open_interest
             ))
         
         return result

@@ -23,15 +23,29 @@ logger = get_logger(__name__)
 class BacktestEngine(IBacktestEngine):
     """回测引擎"""
     
-    def __init__(self, options_engine: Optional[OptionsEngine] = None):
+    def __init__(
+        self,
+        options_engine: Optional[OptionsEngine] = None,
+        use_historical_data: bool = False,
+        historical_data_manager=None
+    ):
         """
         初始化回测引擎
         
         Args:
             options_engine: 期权定价引擎（可选，默认创建新实例）
+            use_historical_data: 是否使用历史数据（默认False使用模拟数据）
+            historical_data_manager: 历史数据管理器实例（当use_historical_data=True时需要）
         """
         self.options_engine = options_engine or OptionsEngine()
-        logger.info("Backtest engine initialized")
+        self.use_historical_data = use_historical_data
+        self.historical_data_manager = historical_data_manager
+        self.historical_dataset = None
+        
+        if use_historical_data and not historical_data_manager:
+            logger.warning("use_historical_data=True but no historical_data_manager provided")
+        
+        logger.info(f"Backtest engine initialized (use_historical_data={use_historical_data})")
     
     async def run_backtest(
         self,
@@ -49,6 +63,7 @@ class BacktestEngine(IBacktestEngine):
             start_date: 回测开始日期
             end_date: 回测结束日期
             initial_capital: 初始资金
+            underlying_symbol: 标的资产符号
             
         Returns:
             BacktestResult对象，包含完整的回测结果
@@ -56,6 +71,27 @@ class BacktestEngine(IBacktestEngine):
         logger.info(f"Starting backtest for strategy: {strategy.name}")
         logger.info(f"Period: {start_date} to {end_date}")
         logger.info(f"Initial capital: {initial_capital}")
+        logger.info(f"Data source: {'historical' if self.use_historical_data else 'simulated'}")
+        
+        # 加载历史数据（如果使用历史数据）
+        if self.use_historical_data and self.historical_data_manager:
+            logger.info("Loading historical data...")
+            self.historical_dataset = self.historical_data_manager.get_data_for_backtest(
+                start_date=start_date,
+                end_date=end_date,
+                underlying_symbol=underlying_symbol,
+                check_completeness=True
+            )
+            
+            if self.historical_dataset.coverage_stats:
+                coverage = self.historical_dataset.coverage_stats.coverage_percentage
+                logger.info(f"Historical data coverage: {coverage:.1%}")
+                
+                if coverage < 0.8:
+                    logger.warning(
+                        f"Low data coverage ({coverage:.1%}). "
+                        f"Missing {len(self.historical_dataset.coverage_stats.missing_dates)} dates"
+                    )
         
         # 初始化组合
         portfolio = Portfolio(
@@ -207,9 +243,13 @@ class BacktestEngine(IBacktestEngine):
             portfolio: 投资组合
             current_date: 当前日期
         """
-        # 模拟标的价格变化（实际应从历史数据获取）
-        # 这里使用简化的随机游走模型
-        underlying_price = 50000.0  # BTC价格基准
+        # 获取标的价格
+        if self.use_historical_data and self.historical_dataset:
+            # 从历史数据获取标的价格（使用平价期权的隐含价格）
+            underlying_price = self._get_underlying_price_from_data(current_date)
+        else:
+            # 使用模拟价格
+            underlying_price = 50000.0  # BTC价格基准
         
         for position in portfolio.positions:
             option = position.option_contract
@@ -218,7 +258,45 @@ class BacktestEngine(IBacktestEngine):
             time_to_expiry = (option.expiration_date - current_date).days / 365.0
             
             if time_to_expiry > 0:
-                # 使用Black-Scholes模型重新定价
+                # 如果使用历史数据，尝试从数据中获取实际价格
+                if self.use_historical_data and self.historical_dataset:
+                    historical_price = self._get_option_price_from_data(
+                        option.instrument_name,
+                        current_date
+                    )
+                    
+                    if historical_price is not None:
+                        # 使用历史价格
+                        option.current_price = historical_price
+                        position.current_value = option.current_price
+                        
+                        # 计算未实现盈亏
+                        if position.quantity > 0:
+                            position.unrealized_pnl = (option.current_price - position.entry_price) * Decimal(position.quantity)
+                        else:
+                            position.unrealized_pnl = (position.entry_price - option.current_price) * Decimal(abs(position.quantity))
+                        
+                        # 使用Black-Scholes计算希腊字母（即使有历史价格）
+                        try:
+                            greeks = self.options_engine.calculate_greeks(
+                                S=underlying_price,
+                                K=float(option.strike_price),
+                                T=time_to_expiry,
+                                r=0.05,
+                                sigma=option.implied_volatility,
+                                option_type=option.option_type
+                            )
+                            option.delta = greeks.delta
+                            option.gamma = greeks.gamma
+                            option.theta = greeks.theta
+                            option.vega = greeks.vega
+                            option.rho = greeks.rho
+                        except Exception as e:
+                            logger.warning(f"Failed to calculate greeks: {str(e)}")
+                        
+                        continue
+                
+                # 如果没有历史数据或获取失败，使用Black-Scholes模型定价
                 try:
                     new_price = self.options_engine.black_scholes_price(
                         S=underlying_price,
@@ -256,6 +334,62 @@ class BacktestEngine(IBacktestEngine):
                     
                 except Exception as e:
                     logger.warning(f"Failed to update option price: {str(e)}")
+    
+    def _get_underlying_price_from_data(self, current_date: datetime) -> float:
+        """
+        从历史数据中获取标的资产价格
+        
+        使用平价期权的隐含价格估算标的价格
+        
+        Args:
+            current_date: 当前日期
+            
+        Returns:
+            标的资产价格
+        """
+        if not self.historical_dataset or not self.historical_dataset.options_data:
+            return 50000.0  # 默认价格
+        
+        # 尝试找到当天的期权数据
+        for instrument_name, data_list in self.historical_dataset.options_data.items():
+            for data in data_list:
+                if data.timestamp.date() == current_date.date():
+                    # 使用期权价格和执行价估算标的价格
+                    # 简化方法：对于平价期权，S ≈ K
+                    return float(data.strike_price)
+        
+        return 50000.0  # 默认价格
+    
+    def _get_option_price_from_data(
+        self,
+        instrument_name: str,
+        current_date: datetime
+    ) -> Optional[Decimal]:
+        """
+        从历史数据中获取期权价格
+        
+        Args:
+            instrument_name: 期权合约名称
+            current_date: 当前日期
+            
+        Returns:
+            期权价格，如果没有数据则返回None
+        """
+        if not self.historical_dataset or not self.historical_dataset.options_data:
+            return None
+        
+        # 查找对应合约的数据
+        if instrument_name not in self.historical_dataset.options_data:
+            return None
+        
+        data_list = self.historical_dataset.options_data[instrument_name]
+        
+        # 查找当天的数据（使用收盘价）
+        for data in data_list:
+            if data.timestamp.date() == current_date.date():
+                return data.close_price
+        
+        return None
     
     def _apply_time_decay(self, portfolio: Portfolio, current_date: datetime):
         """

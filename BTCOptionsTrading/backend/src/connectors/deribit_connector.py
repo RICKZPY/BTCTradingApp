@@ -103,7 +103,7 @@ class DeribitConnector(IDeribitConnector):
         发送API请求
         
         Args:
-            method: API方法名
+            method: API方法名 (例如: "public/get_instruments")
             params: 请求参数
             retry_count: 当前重试次数
             
@@ -115,22 +115,20 @@ class DeribitConnector(IDeribitConnector):
         """
         await self.rate_limiter.acquire()
         
-        request_data = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": method,
-            "params": params or {}
-        }
+        # 构建URL路径和查询参数
+        endpoint = f"/api/v2/{method}"
         
         try:
-            response = await self.client.post("/api/v2/public/", json=request_data)
+            # 使用GET请求
+            response = await self.client.get(endpoint, params=params or {})
             response.raise_for_status()
             
             data = response.json()
             
             if "error" in data:
                 error_msg = data["error"].get("message", "Unknown error")
-                logger.error(f"API error: {error_msg}", method=method, params=params)
+                error_code = data["error"].get("code", "")
+                logger.error(f"API error: {error_msg} (code: {error_code})", method=method, params=params)
                 raise APIConnectionError(f"Deribit API error: {error_msg}")
             
             return data.get("result", {})
@@ -217,6 +215,30 @@ class DeribitConnector(IDeribitConnector):
         except Exception as e:
             logger.error(f"Failed to get options chain: {str(e)}")
             raise APIConnectionError(f"Failed to get options chain: {str(e)}")
+    
+    async def get_index_price(self, currency: str = "BTC") -> float:
+        """
+        获取指数价格（标的资产价格）
+        
+        Args:
+            currency: 货币类型（默认BTC）
+            
+        Returns:
+            指数价格
+        """
+        try:
+            result = await self._request(
+                "public/get_index_price",
+                {"index_name": f"{currency.lower()}_usd"}
+            )
+            
+            index_price = result.get("index_price", 0)
+            logger.info(f"Retrieved index price for {currency}: {index_price}")
+            return float(index_price)
+            
+        except Exception as e:
+            logger.error(f"Failed to get index price: {str(e)}")
+            raise APIConnectionError(f"Failed to get index price: {str(e)}")
     
     def _parse_option_contract(self, data: Dict) -> OptionContract:
         """

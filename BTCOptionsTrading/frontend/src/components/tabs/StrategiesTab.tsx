@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react'
 import { strategiesApi } from '../../api/strategies'
+import { dataApi } from '../../api/data'
 import { useAppStore } from '../../store/useAppStore'
 import type { Strategy, StrategyTemplate } from '../../api/types'
 import Modal from '../Modal'
 import LoadingSpinner from '../LoadingSpinner'
 import StrategyDetailModal from '../strategy/StrategyDetailModal'
+import StrategyEditModal from '../strategy/StrategyEditModal'
+import StrikePicker from '../strategy/StrikePicker'
 
 const StrategiesTab = () => {
   const [strategies, setStrategies] = useState<Strategy[]>([])
@@ -15,7 +18,19 @@ const StrategiesTab = () => {
   const [isCreating, setIsCreating] = useState(false)
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const { setError, setSuccessMessage } = useAppStore()
+
+  // 期权链数据状态
+  const [underlyingPrice, setUnderlyingPrice] = useState<number>(0)
+  const [optionsData, setOptionsData] = useState<Array<{
+    strike: number
+    callPrice: number
+    putPrice: number
+    callIV: number
+    putIV: number
+  }>>([])
+  const [isLoadingOptions, setIsLoadingOptions] = useState(false)
 
   // 表单状态
   const [formData, setFormData] = useState({
@@ -57,7 +72,101 @@ const StrategiesTab = () => {
   useEffect(() => {
     loadStrategies()
     loadTemplates()
+    loadUnderlyingPrice()
   }, [])
+
+  // 加载标的资产价格
+  const loadUnderlyingPrice = async () => {
+    try {
+      const data = await dataApi.getUnderlyingPrice('BTC')
+      setUnderlyingPrice(data.price)
+    } catch (error) {
+      console.error('加载标的价格失败:', error)
+      setUnderlyingPrice(45000) // 使用默认值
+    }
+  }
+
+  // 加载期权链数据
+  const loadOptionsChain = async (expiryDate: string) => {
+    if (!expiryDate) return
+
+    try {
+      setIsLoadingOptions(true)
+      const rawData = await dataApi.getOptionsChain('BTC')
+      
+      // 处理数据：按执行价分组
+      const strikeMap = new Map<number, { call?: any; put?: any }>()
+      const targetDate = new Date(expiryDate).toISOString().split('T')[0]
+      
+      rawData.forEach((option: any) => {
+        const optionDate = new Date(option.expiration_timestamp * 1000)
+          .toISOString().split('T')[0]
+        
+        if (optionDate !== targetDate) return
+        
+        const strike = option.strike
+        if (!strike) return
+        
+        if (!strikeMap.has(strike)) {
+          strikeMap.set(strike, {})
+        }
+        
+        const strikeData = strikeMap.get(strike)!
+        if (option.option_type === 'call') {
+          strikeData.call = option
+        } else if (option.option_type === 'put') {
+          strikeData.put = option
+        }
+      })
+      
+      // 转换为StrikePicker需要的格式
+      const processedData = Array.from(strikeMap.entries())
+        .filter(([_, data]) => data.call && data.put)
+        .map(([strike, data]) => ({
+          strike,
+          callPrice: data.call?.mark_price || 0,
+          putPrice: data.put?.mark_price || 0,
+          callIV: data.call?.implied_volatility || 0,
+          putIV: data.put?.implied_volatility || 0
+        }))
+        .sort((a, b) => a.strike - b.strike)
+      
+      setOptionsData(processedData)
+    } catch (error) {
+      console.error('加载期权链失败:', error)
+      // 生成模拟数据
+      generateMockOptionsData()
+    } finally {
+      setIsLoadingOptions(false)
+    }
+  }
+
+  // 生成模拟期权数据
+  const generateMockOptionsData = () => {
+    const basePrice = underlyingPrice || 45000
+    const strikeInterval = 1000
+    const mockData = []
+    
+    for (let i = -7; i <= 7; i++) {
+      const strike = Math.round(basePrice + (i * strikeInterval))
+      mockData.push({
+        strike,
+        callPrice: Math.max(0, basePrice - strike + Math.random() * 1000),
+        putPrice: Math.max(0, strike - basePrice + Math.random() * 1000),
+        callIV: 0.6 + Math.random() * 0.4,
+        putIV: 0.6 + Math.random() * 0.4
+      })
+    }
+    
+    setOptionsData(mockData)
+  }
+
+  // 当到期日改变时加载期权链
+  useEffect(() => {
+    if (formData.expiry_date && isCreateModalOpen) {
+      loadOptionsChain(formData.expiry_date)
+    }
+  }, [formData.expiry_date, isCreateModalOpen])
 
   // 删除策略
   const handleDelete = async (id: string) => {
@@ -70,6 +179,28 @@ const StrategiesTab = () => {
     } catch (error) {
       setError(error instanceof Error ? error.message : '删除策略失败')
     }
+  }
+
+  // 更新策略
+  const handleUpdate = async (strategyId: string, data: any) => {
+    try {
+      await strategiesApi.update(strategyId, data)
+      setSuccessMessage('策略已更新')
+      setIsEditModalOpen(false)
+      setIsDetailModalOpen(false)
+      setSelectedStrategy(null)
+      loadStrategies()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '更新策略失败')
+      throw error
+    }
+  }
+
+  // 打开编辑模态框
+  const handleEdit = (strategy: Strategy) => {
+    setSelectedStrategy(strategy)
+    setIsDetailModalOpen(false)
+    setIsEditModalOpen(true)
   }
 
   // 重置表单
@@ -345,6 +476,19 @@ const StrategiesTab = () => {
         }}
         strategy={selectedStrategy}
         onDelete={handleDelete}
+        onEdit={handleEdit}
+      />
+
+      {/* 策略编辑模态框 */}
+      <StrategyEditModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false)
+          setSelectedStrategy(null)
+        }}
+        strategy={selectedStrategy}
+        templates={templates}
+        onUpdate={handleUpdate}
       />
 
       {/* 创建策略模态框 */}
@@ -436,65 +580,45 @@ const StrategiesTab = () => {
 
           {/* 根据策略类型显示不同的字段 */}
           {selectedTemplate === 'single_leg' && (
-            <div>
-              <label className="block text-sm font-medium text-text-primary mb-2">
-                执行价 *
-              </label>
-              <input
-                type="number"
-                value={formData.strike}
-                onChange={(e) => setFormData({ ...formData, strike: e.target.value })}
-                className="input w-full"
-                placeholder="例如: 45000"
-                required
-              />
-            </div>
+            <StrikePicker
+              value={formData.strike ? parseFloat(formData.strike) : null}
+              onChange={(strike) => setFormData({ ...formData, strike: strike.toString() })}
+              underlyingPrice={underlyingPrice}
+              optionsData={optionsData}
+              label="执行价 *"
+              disabled={isLoadingOptions || !formData.expiry_date}
+            />
           )}
 
           {selectedTemplate === 'straddle' && (
-            <div>
-              <label className="block text-sm font-medium text-text-primary mb-2">
-                执行价 * (看涨和看跌期权使用相同执行价)
-              </label>
-              <input
-                type="number"
-                value={formData.strike}
-                onChange={(e) => setFormData({ ...formData, strike: e.target.value })}
-                className="input w-full"
-                placeholder="例如: 45000"
-                required
-              />
-            </div>
+            <StrikePicker
+              value={formData.strike ? parseFloat(formData.strike) : null}
+              onChange={(strike) => setFormData({ ...formData, strike: strike.toString() })}
+              underlyingPrice={underlyingPrice}
+              optionsData={optionsData}
+              label="执行价 * (看涨和看跌期权使用相同执行价)"
+              disabled={isLoadingOptions || !formData.expiry_date}
+            />
           )}
 
           {selectedTemplate === 'strangle' && (
             <>
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  看涨期权执行价 *
-                </label>
-                <input
-                  type="number"
-                  value={formData.call_strike}
-                  onChange={(e) => setFormData({ ...formData, call_strike: e.target.value })}
-                  className="input w-full"
-                  placeholder="例如: 47000"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  看跌期权执行价 *
-                </label>
-                <input
-                  type="number"
-                  value={formData.put_strike}
-                  onChange={(e) => setFormData({ ...formData, put_strike: e.target.value })}
-                  className="input w-full"
-                  placeholder="例如: 43000"
-                  required
-                />
-              </div>
+              <StrikePicker
+                value={formData.call_strike ? parseFloat(formData.call_strike) : null}
+                onChange={(strike) => setFormData({ ...formData, call_strike: strike.toString() })}
+                underlyingPrice={underlyingPrice}
+                optionsData={optionsData}
+                label="看涨期权执行价 *"
+                disabled={isLoadingOptions || !formData.expiry_date}
+              />
+              <StrikePicker
+                value={formData.put_strike ? parseFloat(formData.put_strike) : null}
+                onChange={(strike) => setFormData({ ...formData, put_strike: strike.toString() })}
+                underlyingPrice={underlyingPrice}
+                optionsData={optionsData}
+                label="看跌期权执行价 *"
+                disabled={isLoadingOptions || !formData.expiry_date}
+              />
             </>
           )}
 
@@ -503,92 +627,67 @@ const StrategiesTab = () => {
               <p className="text-sm text-text-secondary">
                 铁鹰策略需要4个执行价（从低到高）
               </p>
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  买入看跌执行价 *
-                </label>
-                <input
-                  type="number"
-                  value={formData.strikes[0]}
-                  onChange={(e) => {
-                    const newStrikes = [...formData.strikes]
-                    newStrikes[0] = e.target.value
-                    setFormData({ ...formData, strikes: newStrikes })
-                  }}
-                  className="input w-full"
-                  placeholder="例如: 42000"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  卖出看跌执行价 *
-                </label>
-                <input
-                  type="number"
-                  value={formData.strikes[1]}
-                  onChange={(e) => {
-                    const newStrikes = [...formData.strikes]
-                    newStrikes[1] = e.target.value
-                    setFormData({ ...formData, strikes: newStrikes })
-                  }}
-                  className="input w-full"
-                  placeholder="例如: 43500"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  卖出看涨执行价 *
-                </label>
-                <input
-                  type="number"
-                  value={formData.strikes[2]}
-                  onChange={(e) => {
-                    const newStrikes = [...formData.strikes]
-                    newStrikes[2] = e.target.value
-                    setFormData({ ...formData, strikes: newStrikes })
-                  }}
-                  className="input w-full"
-                  placeholder="例如: 46500"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  买入看涨执行价 *
-                </label>
-                <input
-                  type="number"
-                  value={formData.strikes[3]}
-                  onChange={(e) => {
-                    const newStrikes = [...formData.strikes]
-                    newStrikes[3] = e.target.value
-                    setFormData({ ...formData, strikes: newStrikes })
-                  }}
-                  className="input w-full"
-                  placeholder="例如: 48000"
-                  required
-                />
-              </div>
+              <StrikePicker
+                value={formData.strikes[0] ? parseFloat(formData.strikes[0]) : null}
+                onChange={(strike) => {
+                  const newStrikes = [...formData.strikes]
+                  newStrikes[0] = strike.toString()
+                  setFormData({ ...formData, strikes: newStrikes })
+                }}
+                underlyingPrice={underlyingPrice}
+                optionsData={optionsData}
+                label="买入看跌执行价 *"
+                disabled={isLoadingOptions || !formData.expiry_date}
+              />
+              <StrikePicker
+                value={formData.strikes[1] ? parseFloat(formData.strikes[1]) : null}
+                onChange={(strike) => {
+                  const newStrikes = [...formData.strikes]
+                  newStrikes[1] = strike.toString()
+                  setFormData({ ...formData, strikes: newStrikes })
+                }}
+                underlyingPrice={underlyingPrice}
+                optionsData={optionsData}
+                label="卖出看跌执行价 *"
+                disabled={isLoadingOptions || !formData.expiry_date}
+              />
+              <StrikePicker
+                value={formData.strikes[2] ? parseFloat(formData.strikes[2]) : null}
+                onChange={(strike) => {
+                  const newStrikes = [...formData.strikes]
+                  newStrikes[2] = strike.toString()
+                  setFormData({ ...formData, strikes: newStrikes })
+                }}
+                underlyingPrice={underlyingPrice}
+                optionsData={optionsData}
+                label="卖出看涨执行价 *"
+                disabled={isLoadingOptions || !formData.expiry_date}
+              />
+              <StrikePicker
+                value={formData.strikes[3] ? parseFloat(formData.strikes[3]) : null}
+                onChange={(strike) => {
+                  const newStrikes = [...formData.strikes]
+                  newStrikes[3] = strike.toString()
+                  setFormData({ ...formData, strikes: newStrikes })
+                }}
+                underlyingPrice={underlyingPrice}
+                optionsData={optionsData}
+                label="买入看涨执行价 *"
+                disabled={isLoadingOptions || !formData.expiry_date}
+              />
             </div>
           )}
 
           {selectedTemplate === 'butterfly' && (
             <>
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  中心执行价 *
-                </label>
-                <input
-                  type="number"
-                  value={formData.strike}
-                  onChange={(e) => setFormData({ ...formData, strike: e.target.value })}
-                  className="input w-full"
-                  placeholder="例如: 45000"
-                  required
-                />
-              </div>
+              <StrikePicker
+                value={formData.strike ? parseFloat(formData.strike) : null}
+                onChange={(strike) => setFormData({ ...formData, strike: strike.toString() })}
+                underlyingPrice={underlyingPrice}
+                optionsData={optionsData}
+                label="中心执行价 *"
+                disabled={isLoadingOptions || !formData.expiry_date}
+              />
               <div>
                 <label className="block text-sm font-medium text-text-primary mb-2">
                   翼宽 *
