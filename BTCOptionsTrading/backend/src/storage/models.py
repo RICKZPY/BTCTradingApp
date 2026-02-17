@@ -77,7 +77,7 @@ class BacktestResultModel(Base):
     __tablename__ = "backtest_results"
     
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    strategy_id = Column(String(36), ForeignKey("strategies.id"), nullable=False)
+    strategy_id = Column(String(36), ForeignKey("strategies.id", ondelete="CASCADE"), nullable=False)
     start_date = Column(DateTime, nullable=False)
     end_date = Column(DateTime, nullable=False)
     initial_capital = Column(DECIMAL(18, 2), nullable=False)
