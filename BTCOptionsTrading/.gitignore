@@ -31,6 +31,16 @@ build/
 *.sqlite
 *.sqlite3
 
+# 数据文件
+data/exports/
+data/downloads/
+data/test_*/
+*.csv
+*.json
+
+# 测试报告
+test_report_*.txt
+
 # 日志
 logs/
 *.log
