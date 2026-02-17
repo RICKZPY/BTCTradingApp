@@ -292,17 +292,16 @@ const StrategyWizard = ({
     }
   }
 
-  // 当进入步骤3时，触发验证和风险计算
-  useEffect(() => {
-    if (currentStep === 3) {
-      validateStrategy()
-      calculateRisk()
-    }
-  }, [currentStep])
-
   const handleNext = () => {
     if (currentStep < 3 && canProceed()) {
-      setCurrentStep((currentStep + 1) as WizardStep)
+      const nextStep = (currentStep + 1) as WizardStep
+      setCurrentStep(nextStep)
+      
+      // 当进入步骤3时，触发验证和风险计算
+      if (nextStep === 3) {
+        validateStrategy()
+        calculateRisk()
+      }
     }
   }
 
