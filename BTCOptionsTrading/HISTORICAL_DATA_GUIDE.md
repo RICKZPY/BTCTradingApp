@@ -1,634 +1,986 @@
-# 历史数据集成系统使用指南
+# Historical Options Data Integration - User Guide
 
-## 概述
+## Table of Contents
 
-历史数据集成系统提供了完整的历史期权数据管理功能，包括数据下载、转换、验证、存储和查询。系统支持从 CryptoDataDownload 导入 Deribit 期权历史数据。
+1. [Overview](#overview)
+2. [Getting Started](#getting-started)
+3. [Data Sources](#data-sources)
+4. [Installation](#installation)
+5. [Quick Start](#quick-start)
+6. [Using the CLI](#using-the-cli)
+7. [Using the API](#using-the-api)
+8. [Using the Python SDK](#using-the-python-sdk)
+9. [Data Quality and Validation](#data-quality-and-validation)
+10. [Backtest Integration](#backtest-integration)
+11. [Troubleshooting](#troubleshooting)
+12. [Best Practices](#best-practices)
+13. [FAQ](#faq)
 
-## 系统架构
+## Overview
+
+The Historical Options Data Integration system allows you to download, store, and use real historical Bitcoin options data from CryptoDataDownload in your backtesting workflows. This enables more accurate strategy testing using actual market data instead of simulated prices.
+
+### Key Features
+
+- **Free Data Access**: Download historical Deribit BTC options data from CryptoDataDownload
+- **Automated Processing**: Automatic download, parsing, validation, and storage
+- **Data Quality Validation**: Comprehensive checks for completeness and accuracy
+- **Multiple Interfaces**: CLI, REST API, and Python SDK
+- **Flexible Export**: Export data in CSV, JSON, or Parquet formats
+- **Backtest Integration**: Seamlessly use historical data in your backtests
+- **Efficient Caching**: Fast access to frequently used data
+
+### System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  历史数据管理器                          │
-│              (HistoricalDataManager)                    │
-└─────────────────────────────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
-        ▼                 ▼                 ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│   下载器      │  │   转换器      │  │   验证器      │
-│ Downloader   │  │  Converter   │  │  Validator   │
-└──────────────┘  └──────────────┘  └──────────────┘
-                          │
-                          ▼
-                  ┌──────────────┐
-                  │   缓存层      │
-                  │    Cache     │
-                  │ (LRU+SQLite) │
-                  └──────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    User Interfaces                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │     CLI      │  │   REST API   │  │  Python SDK  │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Historical Data Manager                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │  Downloader  │  │  Converter   │  │  Validator   │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Data Storage                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │  SQLite DB   │  │  File Cache  │  │    Parquet   │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Backtest Engine                           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 快速开始
+## Getting Started
 
-### 1. 准备数据文件
+### Prerequisites
 
-将 CryptoDataDownload 的 CSV 文件放入 `data/downloads` 目录：
+- Python 3.8 or higher
+- SQLite 3
+- Internet connection for downloading data
+- At least 1GB free disk space (more for extensive historical data)
 
-```bash
-mkdir -p data/downloads
-# 将 CSV 文件复制到此目录
-# 文件名格式: Deribit_BTCUSD_20240329_50000_C.csv
-```
+### What You'll Need
 
-### 2. 使用 Python API
+1. **Backend Installation**: The BTC Options Trading backend must be installed
+2. **Dependencies**: All Python dependencies from `requirements.txt`
+3. **Database**: SQLite database (automatically created)
+4. **Storage**: Directory for downloaded files and cache
 
-```python
-from src.historical.manager import HistoricalDataManager
+## Data Sources
 
-# 初始化管理器
-manager = HistoricalDataManager(
-    download_dir="data/downloads",
-    db_path="data/historical_options.db",
-    cache_size_mb=100
-)
+### CryptoDataDownload
 
-# 导入数据
-result = manager.import_historical_data(
-    validate=True,
-    generate_report=True
-)
+The system uses free historical data from [CryptoDataDownload](https://www.cryptodatadownload.com/data/deribit/), which provides:
 
-print(f"导入完成: {result.success_count}/{result.total_count} 文件")
-print(f"记录数: {result.records_imported}")
-print(f"质量评分: {result.quality_report.quality_score:.1f}/100")
+- **Exchange**: Deribit
+- **Asset**: Bitcoin (BTC) options
+- **Format**: CSV files with OHLCV data
+- **Frequency**: Varies by file (typically hourly or daily)
+- **Coverage**: Multiple expiry dates
+- **Cost**: Free
 
-# 获取回测数据
-from datetime import datetime
+### Data Format
 
-dataset = manager.get_data_for_backtest(
-    start_date=datetime(2024, 3, 29),
-    end_date=datetime(2024, 3, 30),
-    underlying_symbol="BTC"
-)
+Each CSV file contains:
+- **Timestamp**: Date and time of the data point
+- **Open**: Opening price
+- **High**: Highest price in the period
+- **Low**: Lowest price in the period
+- **Close**: Closing price
+- **Volume**: Trading volume
 
-print(f"合约数量: {len(dataset.options_data)}")
-print(f"数据覆盖率: {dataset.coverage_stats.coverage_percentage:.1%}")
-```
+File naming convention: `Deribit_BTCUSD_YYYYMMDD_STRIKE_TYPE.csv`
+- Example: `Deribit_BTCUSD_20240329_50000_C.csv` (Call option, $50,000 strike, March 29, 2024 expiry)
 
-### 3. 使用 REST API
+## Installation
 
-启动 API 服务器：
+### 1. Install Dependencies
 
 ```bash
 cd BTCOptionsTrading/backend
-python run_api.py
+pip install -r requirements.txt
 ```
 
-#### 导入数据
+### 2. Verify Installation
 
 ```bash
-curl -X POST "http://localhost:8000/api/historical-data/import" \
-  -H "Content-Type: application/json" \
-  -d '{"validate": true, "generate_report": true}'
+python historical_cli.py --help
 ```
 
-#### 查询可用合约
+You should see the CLI help message with available commands.
+
+### 3. Initialize Database
+
+The database is automatically created on first use, but you can verify:
 
 ```bash
-curl "http://localhost:8000/api/historical-data/available/instruments?underlying_symbol=BTC"
+python historical_cli.py stats
 ```
 
-#### 获取覆盖率统计
+## Quick Start
+
+### Complete Workflow in 5 Steps
 
 ```bash
-curl "http://localhost:8000/api/historical-data/coverage?start_date=2024-03-29T00:00:00&end_date=2024-03-30T00:00:00&underlying_symbol=BTC"
+# 1. Download historical data for a specific expiry date
+python historical_cli.py download -e 2024-03-29
+
+# 2. Import the downloaded data into the database
+python historical_cli.py import -d data/downloads
+
+# 3. Validate data quality
+python historical_cli.py validate -s 2024-03-01 -e 2024-03-31
+
+# 4. View statistics
+python historical_cli.py stats
+
+# 5. Use in backtest (see Backtest Integration section)
 ```
 
-#### 导出数据
+### Your First Download
+
+Let's download and import data for one expiry date:
 
 ```bash
-curl -X POST "http://localhost:8000/api/historical-data/export" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "format": "csv",
-    "start_date": "2024-03-29T00:00:00",
-    "end_date": "2024-03-30T00:00:00"
-  }'
+# Download data for March 29, 2024 expiry
+python historical_cli.py download -e 2024-03-29
+
+# Import all downloaded files
+python historical_cli.py import -d data/downloads
+
+# Check what we have
+python historical_cli.py stats
 ```
 
-## 核心功能
-
-### 1. 数据导入
-
-系统支持批量导入 CSV 文件，自动完成以下流程：
-
-1. **文件扫描** - 扫描下载目录中的所有 CSV 文件
-2. **数据解析** - 解析 CSV 文件和文件名中的期权信息
-3. **数据转换** - 转换为系统内部格式
-4. **数据验证** - 验证数据完整性和质量
-5. **数据存储** - 存储到 SQLite 数据库
-
-```python
-# 导入所有文件
-result = manager.import_historical_data()
-
-# 导入指定文件
-from pathlib import Path
-files = [Path("data/downloads/file1.csv"), Path("data/downloads/file2.csv")]
-result = manager.import_historical_data(file_paths=files)
+Expected output:
+```
+✓ Downloaded 15 files for expiry 2024-03-29
+✓ Imported 15 files successfully
+✓ Total records: 12,450
+✓ Date range: 2024-01-01 to 2024-03-29
 ```
 
-### 2. 数据验证
+## Using the CLI
 
-系统提供多层次的数据验证：
+The Command-Line Interface (CLI) is the primary way to manage historical data.
 
-#### 完整性验证
-- 时间序列连续性检查
-- 缺失值检测
-- 重复数据检测
+### Download Command
 
-#### 价格合理性验证
-- OHLC 关系验证
-- 负价格检测
-- 异常波动检测
+Download historical options data from CryptoDataDownload.
 
-#### 期权平价关系验证
-- 看涨看跌平价关系检查
+```bash
+# Basic usage
+python historical_cli.py download -e 2024-03-29
 
-```python
-# 验证数据质量
-report = manager.validate_data_quality(
-    start_date=datetime(2024, 3, 29),
-    end_date=datetime(2024, 3, 30)
-)
+# Multiple expiry dates
+python historical_cli.py download -e 2024-03-29 -e 2024-04-26 -e 2024-05-31
 
-print(f"质量评分: {report.quality_score:.1f}/100")
-print(f"总记录数: {report.total_records}")
-print(f"异常记录: {report.anomaly_records}")
-print(f"问题数量: {len(report.issues)}")
+# With custom settings
+python historical_cli.py download -e 2024-03-29 -s BTC -d /custom/path --force
+
+# Batch download with higher concurrency
+python historical_cli.py download -e 2024-03-29 -e 2024-04-26 -c 5
 ```
 
-### 3. 数据查询
+**Options:**
+- `-e, --expiry-date`: Expiry date in YYYY-MM-DD format (can specify multiple)
+- `-s, --symbol`: Underlying symbol (default: BTC)
+- `-d, --download-dir`: Download directory (default: data/downloads)
+- `-f, --force`: Force re-download even if files exist
+- `-c, --max-concurrent`: Maximum concurrent downloads (default: 3)
 
-#### 查询可用合约
+### Import Command
 
-```python
-# 查询所有 BTC 合约
-instruments = manager.get_available_instruments(underlying_symbol="BTC")
+Import downloaded CSV files into the database.
 
-# 查询特定时间范围的合约
-instruments = manager.get_available_instruments(
-    start_date=datetime(2024, 3, 29),
-    end_date=datetime(2024, 3, 30),
-    underlying_symbol="BTC"
-)
+```bash
+# Import from directory
+python historical_cli.py import -d data/downloads
+
+# Import specific files
+python historical_cli.py import -f data/file1.csv -f data/file2.csv
+
+# Import without validation (faster)
+python historical_cli.py import -d data/downloads --no-validate --no-report
+
+# Import to custom database
+python historical_cli.py import -d data/downloads --db-path /custom/db.db
 ```
 
-#### 查询可用日期
+**Options:**
+- `-f, --file`: CSV file path (can specify multiple)
+- `-d, --directory`: Directory containing CSV files
+- `--validate/--no-validate`: Validate data quality (default: validate)
+- `--report/--no-report`: Generate quality report (default: report)
+- `--db-path`: Database path (default: data/btc_options.db)
 
-```python
-# 查询所有日期
-dates = manager.get_available_dates(underlying_symbol="BTC")
+### Validate Command
 
-# 查询特定合约的日期
-dates = manager.get_available_dates(instrument_name="BTC-29MAR24-50000-C")
+Validate the quality and completeness of stored data.
+
+```bash
+# Validate all data
+python historical_cli.py validate
+
+# Validate date range
+python historical_cli.py validate --start-date 2024-03-01 --end-date 2024-03-31
+
+# Validate specific instrument
+python historical_cli.py validate --instrument BTC-29MAR24-50000-C
+
+# Get detailed validation report
+python historical_cli.py validate --start-date 2024-03-01 --end-date 2024-03-31 --detailed
 ```
 
-#### 获取覆盖率统计
+**Options:**
+- `-s, --start-date`: Start date (YYYY-MM-DD)
+- `-e, --end-date`: End date (YYYY-MM-DD)
+- `-i, --instrument`: Instrument name
+- `--db-path`: Database path
+- `--detailed`: Show detailed validation results
 
-```python
-stats = manager.get_coverage_stats(
-    start_date=datetime(2024, 3, 29),
-    end_date=datetime(2024, 3, 30),
-    underlying_symbol="BTC"
-)
+### Export Command
 
-print(f"总天数: {stats.total_days}")
-print(f"有数据天数: {stats.days_with_data}")
-print(f"覆盖率: {stats.coverage_percentage:.1%}")
-print(f"缺失日期: {len(stats.missing_dates)}")
-print(f"覆盖的执行价: {stats.strikes_covered}")
+Export historical data to various formats.
+
+```bash
+# Export to CSV
+python historical_cli.py export -s 2024-03-01 -e 2024-03-31 -f csv -o data/export.csv
+
+# Export to JSON with compression
+python historical_cli.py export -s 2024-03-01 -e 2024-03-31 -f json -o data/export.json --compress
+
+# Export specific instruments to Parquet
+python historical_cli.py export -s 2024-03-01 -e 2024-03-31 \
+  -i BTC-29MAR24-50000-C -i BTC-29MAR24-51000-C \
+  -f parquet -o data/export.parquet
 ```
 
-### 4. 回测数据获取
+**Options:**
+- `-s, --start-date`: Start date (YYYY-MM-DD) [required]
+- `-e, --end-date`: End date (YYYY-MM-DD) [required]
+- `-i, --instrument`: Instrument name (can specify multiple)
+- `-f, --format`: Export format (csv, json, parquet)
+- `-o, --output`: Output file path [required]
+- `--compress`: Compress output file
+- `--db-path`: Database path
 
-为回测引擎提供数据集：
+### Stats Command
 
-```python
-dataset = manager.get_data_for_backtest(
-    start_date=datetime(2024, 3, 29),
-    end_date=datetime(2024, 3, 30),
-    instruments=["BTC-29MAR24-50000-C", "BTC-29MAR24-51000-C"],  # 可选
-    underlying_symbol="BTC",
-    check_completeness=True
-)
+Show statistics about stored historical data.
 
-# 访问数据
-for instrument_name, data_list in dataset.options_data.items():
-    print(f"{instrument_name}: {len(data_list)} 条记录")
+```bash
+# General statistics
+python historical_cli.py stats
 
-# 检查覆盖率
-if dataset.coverage_stats.coverage_percentage < 0.9:
-    print("警告: 数据覆盖率低于 90%")
+# Statistics for date range
+python historical_cli.py stats --start-date 2024-03-01 --end-date 2024-03-31
+
+# Statistics for specific symbol
+python historical_cli.py stats --symbol ETH
 ```
 
-#### 与回测引擎集成
+**Options:**
+- `-s, --start-date`: Start date (YYYY-MM-DD)
+- `-e, --end-date`: End date (YYYY-MM-DD)
+- `--symbol`: Underlying symbol (default: BTC)
+- `--db-path`: Database path
 
-系统支持在回测引擎中使用历史数据：
+### Clear Command
 
-```python
-from src.backtest.backtest_engine import BacktestEngine
-from src.historical.manager import HistoricalDataManager
+Clear cached data or database.
 
-# 初始化历史数据管理器
-historical_manager = HistoricalDataManager(
-    download_dir="data/downloads",
-    db_path="data/historical_options.db"
-)
+```bash
+# Clear file cache only
+python historical_cli.py clear --clear-cache
 
-# 创建使用历史数据的回测引擎
-backtest_engine = BacktestEngine(
-    use_historical_data=True,
-    historical_data_manager=historical_manager
-)
+# Clear database (requires confirmation)
+python historical_cli.py clear --clear-database
 
-# 运行回测（自动使用历史数据）
-result = await backtest_engine.run_backtest(
-    strategy=my_strategy,
-    start_date=datetime(2024, 3, 1),
-    end_date=datetime(2024, 3, 31),
-    initial_capital=Decimal("10000"),
-    underlying_symbol="BTC"
-)
-
-print(f"回测收益率: {result.total_return:.2%}")
-print(f"夏普比率: {result.sharpe_ratio:.2f}")
-print(f"最大回撤: {result.max_drawdown:.2%}")
+# Clear both
+python historical_cli.py clear --clear-cache --clear-database
 ```
 
-#### 数据源切换
+**Warning:** The `--clear-database` option will delete all historical data. This action cannot be undone.
 
-回测引擎支持在历史数据和模拟数据之间切换：
+## Using the API
 
-```python
-# 使用历史数据
-engine_historical = BacktestEngine(
-    use_historical_data=True,
-    historical_data_manager=historical_manager
-)
+The REST API provides programmatic access to historical data management.
 
-# 使用模拟数据（Black-Scholes定价）
-engine_simulated = BacktestEngine(
-    use_historical_data=False
-)
+### Base URL
 
-# 两种引擎可以独立运行回测
-result_historical = await engine_historical.run_backtest(...)
-result_simulated = await engine_simulated.run_backtest(...)
-
-# 比较结果
-print(f"历史数据回测收益: {result_historical.total_return:.2%}")
-print(f"模拟数据回测收益: {result_simulated.total_return:.2%}")
+```
+http://localhost:8000/api/historical-data
 ```
 
-**数据源行为说明：**
+### Endpoints
 
-- 当 `use_historical_data=True` 时：
-  - 优先使用历史数据中的实际期权价格
-  - 如果某个时间点没有历史数据，回退到 Black-Scholes 定价
-  - 自动检查数据覆盖率并记录警告
-  
-- 当 `use_historical_data=False` 时：
-  - 完全使用 Black-Scholes 模型定价
-  - 适用于测试策略逻辑或没有历史数据的情况
+#### 1. Import Historical Data
 
-### 5. 数据导出
+```http
+POST /api/historical-data/import
+Content-Type: application/json
 
-支持导出为 CSV 或 JSON 格式：
-
-```python
-# 通过 API 导出
-import requests
-
-response = requests.post(
-    "http://localhost:8000/api/historical-data/export",
-    json={
-        "format": "csv",
-        "start_date": "2024-03-29T00:00:00",
-        "end_date": "2024-03-30T00:00:00",
-        "instruments": ["BTC-29MAR24-50000-C"],
-        "compress": True
-    }
-)
-
-result = response.json()
-print(f"导出文件: {result['file_path']}")
-print(f"记录数: {result['records_exported']}")
-```
-
-### 6. 缓存管理
-
-系统使用两层缓存：
-
-1. **内存缓存 (LRU)** - 快速访问最近使用的数据
-2. **SQLite 数据库** - 持久化存储
-
-```python
-# 获取缓存统计
-stats = manager.get_stats()
-print(f"数据库记录: {stats['cache']['database']['record_count']}")
-print(f"内存缓存: {stats['cache']['memory_cache']['entries']} 条目")
-print(f"缓存大小: {stats['cache']['memory_cache']['size_mb']:.2f} MB")
-
-# 清理内存缓存
-manager.clear_cache(clear_database=False)
-
-# 清理所有数据（包括数据库）
-manager.clear_cache(clear_database=True)
-```
-
-## API 端点参考
-
-### 数据管理
-
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/api/historical-data/import` | POST | 导入历史数据 |
-| `/api/historical-data/available/instruments` | GET | 获取可用合约列表 |
-| `/api/historical-data/available/dates` | GET | 获取可用日期列表 |
-| `/api/historical-data/coverage` | GET | 获取覆盖率统计 |
-| `/api/historical-data/quality` | GET | 获取质量报告 |
-| `/api/historical-data/stats` | GET | 获取统计信息 |
-| `/api/historical-data/cache` | DELETE | 清理缓存 |
-| `/api/historical-data/export` | POST | 导出数据 |
-| `/api/historical-data/health` | GET | 健康检查 |
-
-## 数据格式
-
-### CSV 文件格式
-
-文件名格式：`Deribit_BTCUSD_20240329_50000_C.csv`
-
-- `BTCUSD` - 标的资产
-- `20240329` - 到期日期 (YYYYMMDD)
-- `50000` - 执行价
-- `C` - 期权类型 (C=看涨, P=看跌)
-
-CSV 内容格式：
-
-```csv
-unix,open,high,low,close,volume
-1711670400,0.0500,0.0550,0.0450,0.0525,100.5
-1711674000,0.0525,0.0575,0.0500,0.0550,150.25
-```
-
-### 内部数据格式
-
-```python
 {
-    "instrument_name": "BTC-29MAR24-50000-C",
-    "timestamp": "2024-03-29T08:00:00",
-    "open_price": 0.0500,
-    "high_price": 0.0550,
-    "low_price": 0.0450,
-    "close_price": 0.0525,
-    "volume": 100.5,
-    "strike_price": 50000,
-    "expiry_date": "2024-03-29T00:00:00",
-    "option_type": "call",
-    "underlying_symbol": "BTC",
-    "data_source": "CryptoDataDownload"
+  "expiry_dates": ["2024-03-29", "2024-04-26"],
+  "validate": true
 }
 ```
 
-## 性能优化
-
-### 1. 批量导入
-
-使用批量导入可以显著提高性能：
-
-```python
-# 批量导入（推荐）
-result = manager.import_historical_data()  # 自动批量处理
-
-# 单个文件导入（较慢）
-for file in files:
-    result = manager.import_historical_data(file_paths=[file])
+Response:
+```json
+{
+  "success": true,
+  "files_processed": 30,
+  "records_imported": 25000,
+  "records_failed": 0,
+  "duration_seconds": 45.2,
+  "quality_report": {
+    "total_records": 25000,
+    "missing_records": 0,
+    "anomaly_records": 5,
+    "coverage_percentage": 99.8
+  }
+}
 ```
 
-### 2. 缓存配置
+#### 2. List Available Data
 
-根据可用内存调整缓存大小：
-
-```python
-# 小内存环境
-manager = HistoricalDataManager(cache_size_mb=50)
-
-# 大内存环境
-manager = HistoricalDataManager(cache_size_mb=500)
+```http
+GET /api/historical-data/available?symbol=BTC
 ```
 
-### 3. 并行处理
+Response:
+```json
+{
+  "files": [
+    {
+      "expiry_date": "2024-03-29",
+      "url": "https://...",
+      "filename": "Deribit_BTCUSD_20240329.zip",
+      "estimated_size": 5242880,
+      "last_modified": "2024-03-30T00:00:00Z"
+    }
+  ]
+}
+```
 
-转换器自动使用多进程并行处理：
+#### 3. Get Coverage Statistics
+
+```http
+GET /api/historical-data/coverage?start_date=2024-03-01&end_date=2024-03-31
+```
+
+Response:
+```json
+{
+  "start_date": "2024-03-01",
+  "end_date": "2024-03-31",
+  "total_records": 25000,
+  "coverage_percentage": 95.5,
+  "available_instruments": 150,
+  "missing_dates": ["2024-03-15", "2024-03-16"]
+}
+```
+
+#### 4. Export Data
+
+```http
+POST /api/historical-data/export
+Content-Type: application/json
+
+{
+  "start_date": "2024-03-01",
+  "end_date": "2024-03-31",
+  "format": "csv",
+  "instruments": ["BTC-29MAR24-50000-C"],
+  "compress": true
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "file_path": "data/exports/historical_data_20240315_120000.csv.gz",
+  "records_exported": 5000,
+  "file_size_bytes": 524288
+}
+```
+
+#### 5. Clear Cache
+
+```http
+DELETE /api/historical-data/cache?before_date=2024-01-01
+```
+
+Response:
+```json
+{
+  "success": true,
+  "records_deleted": 10000
+}
+```
+
+### API Examples
+
+#### Python with requests
 
 ```python
-# 自动使用 CPU 核心数
+import requests
+
+# Import data
+response = requests.post(
+    'http://localhost:8000/api/historical-data/import',
+    json={
+        'expiry_dates': ['2024-03-29'],
+        'validate': True
+    }
+)
+result = response.json()
+print(f"Imported {result['records_imported']} records")
+
+# Get coverage stats
+response = requests.get(
+    'http://localhost:8000/api/historical-data/coverage',
+    params={
+        'start_date': '2024-03-01',
+        'end_date': '2024-03-31'
+    }
+)
+stats = response.json()
+print(f"Coverage: {stats['coverage_percentage']}%")
+```
+
+#### JavaScript/TypeScript
+
+```typescript
+// Import data
+const response = await fetch('http://localhost:8000/api/historical-data/import', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    expiry_dates: ['2024-03-29'],
+    validate: true
+  })
+});
+const result = await response.json();
+console.log(`Imported ${result.records_imported} records`);
+
+// Get coverage stats
+const statsResponse = await fetch(
+  'http://localhost:8000/api/historical-data/coverage?' +
+  'start_date=2024-03-01&end_date=2024-03-31'
+);
+const stats = await statsResponse.json();
+console.log(`Coverage: ${stats.coverage_percentage}%`);
+```
+
+## Using the Python SDK
+
+For Python applications, you can use the historical data classes directly.
+
+### Basic Usage
+
+```python
+from src.historical.manager import HistoricalDataManager
+from datetime import datetime
+
+# Initialize manager
+manager = HistoricalDataManager()
+
+# Import historical data
+result = await manager.import_historical_data(
+    expiry_dates=[datetime(2024, 3, 29)],
+    validate=True
+)
+
+print(f"Imported {result.records_imported} records")
+print(f"Quality score: {result.quality_report.quality_score}")
+
+# Get data for backtest
+backtest_data = manager.get_data_for_backtest(
+    start_date=datetime(2024, 3, 1),
+    end_date=datetime(2024, 3, 31),
+    strikes=[50000, 51000, 52000]
+)
+
+print(f"Loaded {len(backtest_data.options_data)} instruments")
+```
+
+### Advanced Usage
+
+```python
+from src.historical.downloader import CryptoDataDownloader
+from src.historical.converter import HistoricalDataConverter
+from src.historical.validator import HistoricalDataValidator
+from src.historical.cache import HistoricalDataCache
+
+# Initialize components
+downloader = CryptoDataDownloader(cache_dir="data/historical")
 converter = HistoricalDataConverter()
-data = converter.process_files_parallel(files)
+validator = HistoricalDataValidator()
+cache = HistoricalDataCache(db_manager=db_manager)
 
-# 手动指定工作进程数
-data = converter.process_files_parallel(files, max_workers=4)
-```
+# Download data
+files = await downloader.batch_download(
+    expiry_dates=[datetime(2024, 3, 29), datetime(2024, 4, 26)],
+    max_concurrent=3
+)
 
-## 故障排除
+# Parse and convert
+for file_path in files.values():
+    ohlcv_data = converter.parse_csv_file(file_path)
+    option_info = converter.extract_option_info(file_path.name)
+    internal_data = converter.convert_to_internal_format(ohlcv_data, option_info)
+    
+    # Validate
+    validation_result = validator.validate_data_completeness(internal_data)
+    if validation_result.is_valid:
+        # Store in cache
+        cache.store_historical_data(internal_data)
 
-### 问题 1: 导入失败
-
-**症状**: 导入时出现错误
-
-**解决方案**:
-1. 检查 CSV 文件格式是否正确
-2. 确认文件名符合命名规范
-3. 查看日志文件获取详细错误信息
-
-```python
-# 启用详细日志
-import logging
-logging.basicConfig(level=logging.DEBUG)
-```
-
-### 问题 2: 数据质量低
-
-**症状**: 质量评分低于预期
-
-**解决方案**:
-1. 检查质量报告中的具体问题
-2. 验证源数据的完整性
-3. 检查时间范围是否正确
-
-```python
-report = manager.validate_data_quality()
-for issue in report.issues:
-    print(f"[{issue.severity}] {issue.message}")
-```
-
-### 问题 3: 查询性能慢
-
-**症状**: 数据查询响应时间长
-
-**解决方案**:
-1. 增加缓存大小
-2. 使用更具体的查询条件
-3. 定期清理不需要的数据
-
-```python
-# 使用具体的查询条件
-data = manager.cache.query_option_data(
-    instrument_name="BTC-29MAR24-50000-C",  # 指定合约
-    start_date=start,
-    end_date=end
+# Query data
+data = cache.query_option_data(
+    instrument_name="BTC-29MAR24-50000-C",
+    start_date=datetime(2024, 3, 1),
+    end_date=datetime(2024, 3, 31)
 )
 ```
 
-## 最佳实践
+## Data Quality and Validation
 
-1. **定期验证数据质量** - 在导入后立即验证
-2. **监控覆盖率** - 确保数据完整性
-3. **合理使用缓存** - 根据内存情况调整缓存大小
-4. **批量操作** - 尽可能使用批量导入和查询
-5. **定期备份** - 备份 SQLite 数据库文件
+### Validation Checks
 
-## 示例代码
+The system performs comprehensive validation:
 
-完整的使用示例请参考：
+1. **Completeness Checks**
+   - Time series continuity
+   - Missing values detection
+   - Data point count verification
 
-- `test_manager.py` - 管理器使用示例
-- `test_historical_api.py` - API 使用示例
-- `test_converter.py` - 转换器使用示例
-- `test_validator.py` - 验证器使用示例
-- `test_cache.py` - 缓存使用示例
-- `test_backtest_integration.py` - 回测引擎集成示例
+2. **Price Sanity Checks**
+   - Negative price detection
+   - Extreme volatility detection
+   - OHLC relationship validation (Low ≤ Open ≤ High, Low ≤ Close ≤ High)
 
-## 回测引擎集成
+3. **Option-Specific Checks**
+   - Put-call parity validation
+   - Strike price consistency
+   - Expiry date validation
 
-历史数据系统已完全集成到回测引擎中，支持使用真实历史数据进行回测。
+### Quality Reports
 
-### 集成特性
+Quality reports include:
 
-1. **数据源选择** - 可以选择使用历史数据或模拟数据
-2. **自动数据加载** - 回测引擎自动从历史数据管理器加载数据
-3. **数据覆盖率检查** - 自动检查数据完整性并记录警告
-4. **价格获取策略** - 优先使用历史价格，缺失时回退到模型定价
-5. **无缝切换** - 可以在历史数据和模拟数据之间轻松切换
+```json
+{
+  "quality_score": 95.5,
+  "total_records": 25000,
+  "missing_records": 100,
+  "anomaly_records": 50,
+  "coverage_percentage": 99.4,
+  "time_range": ["2024-03-01", "2024-03-31"],
+  "issues": [
+    {
+      "severity": "warning",
+      "type": "missing_data",
+      "description": "Missing data for 2024-03-15",
+      "count": 50
+    },
+    {
+      "severity": "error",
+      "type": "price_anomaly",
+      "description": "Negative prices detected",
+      "count": 5
+    }
+  ]
+}
+```
 
-### 使用示例
+### Interpreting Quality Scores
+
+- **95-100**: Excellent quality, safe to use
+- **85-95**: Good quality, minor issues
+- **70-85**: Acceptable quality, review issues
+- **Below 70**: Poor quality, investigate before use
+
+## Backtest Integration
+
+### Using Historical Data in Backtests
 
 ```python
 from src.backtest.backtest_engine import BacktestEngine
 from src.historical.manager import HistoricalDataManager
-from src.core.models import Strategy, StrategyLeg, OptionContract, OptionType, ActionType
 from datetime import datetime
-from decimal import Decimal
 
-# 1. 初始化历史数据管理器
-historical_manager = HistoricalDataManager(
-    download_dir="data/downloads",
-    db_path="data/historical_options.db"
+# Get historical data
+manager = HistoricalDataManager()
+backtest_data = manager.get_data_for_backtest(
+    start_date=datetime(2024, 3, 1),
+    end_date=datetime(2024, 3, 31)
 )
 
-# 2. 导入历史数据（如果还没有）
-import_result = historical_manager.import_historical_data(
-    validate=True,
-    generate_report=True
-)
-print(f"导入完成: {import_result.records_imported} 条记录")
-
-# 3. 创建交易策略
-strategy = Strategy(
-    name="Bull Call Spread",
-    description="看涨价差策略",
-    legs=[
-        StrategyLeg(
-            option_contract=long_call,  # 买入低执行价看涨期权
-            action=ActionType.BUY,
-            quantity=1
-        ),
-        StrategyLeg(
-            option_contract=short_call,  # 卖出高执行价看涨期权
-            action=ActionType.SELL,
-            quantity=1
-        )
-    ]
+# Configure backtest engine
+engine = BacktestEngine(
+    data_source='historical',  # Use historical data
+    historical_data=backtest_data
 )
 
-# 4. 创建使用历史数据的回测引擎
-backtest_engine = BacktestEngine(
-    use_historical_data=True,
-    historical_data_manager=historical_manager
-)
-
-# 5. 运行回测
-result = await backtest_engine.run_backtest(
+# Run backtest
+strategy = YourStrategy()
+results = engine.run_backtest(
     strategy=strategy,
     start_date=datetime(2024, 3, 1),
-    end_date=datetime(2024, 3, 31),
-    initial_capital=Decimal("10000"),
-    underlying_symbol="BTC"
+    end_date=datetime(2024, 3, 31)
 )
 
-# 6. 查看结果
-print(f"策略: {result.strategy_name}")
-print(f"初始资金: {result.initial_capital}")
-print(f"最终资金: {result.final_capital}")
-print(f"总收益率: {result.total_return:.2%}")
-print(f"夏普比率: {result.sharpe_ratio:.2f}")
-print(f"最大回撤: {result.max_drawdown:.2%}")
-print(f"胜率: {result.win_rate:.2%}")
-print(f"总交易数: {result.total_trades}")
+print(f"Total return: {results.total_return}%")
+print(f"Sharpe ratio: {results.sharpe_ratio}")
 ```
 
-### 数据源对比
+### Data Source Selection
 
-可以同时运行历史数据和模拟数据回测，对比结果：
+The backtest engine supports multiple data sources:
 
 ```python
-# 历史数据回测
-engine_historical = BacktestEngine(
-    use_historical_data=True,
-    historical_data_manager=historical_manager
-)
-result_historical = await engine_historical.run_backtest(
-    strategy=strategy,
-    start_date=start_date,
-    end_date=end_date,
-    initial_capital=initial_capital
-)
+# Use historical data
+engine = BacktestEngine(data_source='historical')
 
-# 模拟数据回测
-engine_simulated = BacktestEngine(use_historical_data=False)
-result_simulated = await engine_simulated.run_backtest(
-    strategy=strategy,
-    start_date=start_date,
-    end_date=end_date,
-    initial_capital=initial_capital
-)
+# Use live API data
+engine = BacktestEngine(data_source='live')
 
-# 对比结果
-print("=" * 60)
-print(f"{'指标':<20} {'历史数据':<20} {'模拟数据':<20}")
-print("=" * 60)
-print(f"{'总收益率':<20} {result_historical.total_return:>18.2%} {result_simulated.total_return:>18.2%}")
-print(f"{'夏普比率':<20} {result_historical.sharpe_ratio:>18.2f} {result_simulated.sharpe_ratio:>18.2f}")
-print(f"{'最大回撤':<20} {result_historical.max_drawdown:>18.2%} {result_simulated.max_drawdown:>18.2%}")
-print(f"{'胜率':<20} {result_historical.win_rate:>18.2%} {result_simulated.win_rate:>18.2%}")
-print("=" * 60)
+# Hybrid: historical for past, live for recent
+engine = BacktestEngine(
+    data_source='hybrid',
+    historical_cutoff=datetime(2024, 3, 1)
+)
 ```
 
-## 技术支持
+### Handling Missing Data
 
-如有问题，请查看：
+```python
+# Check data coverage before backtest
+coverage = manager.get_coverage_stats(
+    start_date=datetime(2024, 3, 1),
+    end_date=datetime(2024, 3, 31)
+)
 
-1. 系统日志文件
-2. 测试文件中的示例代码
-3. API 文档 (http://localhost:8000/docs)
+if coverage.coverage_percentage < 90:
+    print(f"Warning: Only {coverage.coverage_percentage}% coverage")
+    print(f"Missing dates: {coverage.missing_dates}")
+    
+    # Download missing data
+    for missing_date in coverage.missing_dates:
+        await manager.import_historical_data(
+            expiry_dates=[missing_date],
+            validate=True
+        )
+```
+
+## Troubleshooting
+
+### Common Issues and Solutions
+
+#### 1. Download Fails
+
+**Problem**: Downloads fail with network errors
+
+**Solutions**:
+- Check internet connection
+- Verify the expiry date exists on CryptoDataDownload
+- Use `--force` flag to retry
+- Check logs in `logs/app.log`
+- Try reducing `--max-concurrent` value
+
+```bash
+# Retry with force flag
+python historical_cli.py download -e 2024-03-29 --force
+
+# Reduce concurrency
+python historical_cli.py download -e 2024-03-29 -c 1
+```
+
+#### 2. Import Errors
+
+**Problem**: CSV files fail to import
+
+**Solutions**:
+- Verify CSV files are in correct format
+- Check file permissions
+- Ensure database path is writable
+- Use `--no-validate` to skip validation
+- Check for corrupted files
+
+```bash
+# Import without validation
+python historical_cli.py import -d data/downloads --no-validate
+
+# Check file permissions
+ls -la data/downloads/
+
+# Verify database is writable
+touch data/btc_options.db
+```
+
+#### 3. Validation Issues
+
+**Problem**: Validation reports many issues
+
+**Solutions**:
+- Use `--detailed` flag to see specific problems
+- Check if data source has known quality issues
+- Filter out problematic records during export
+- Review validation thresholds in config
+
+```bash
+# Get detailed validation report
+python historical_cli.py validate -s 2024-03-01 -e 2024-03-31 --detailed
+
+# Export only valid data
+python historical_cli.py export -s 2024-03-01 -e 2024-03-31 -o clean_data.csv
+```
+
+#### 4. Performance Issues
+
+**Problem**: Operations are slow
+
+**Solutions**:
+- Use Parquet format for exports (10-100x faster than CSV)
+- Increase `--max-concurrent` for downloads
+- Use `--no-validate` during import if validation is slow
+- Split large date ranges into smaller chunks
+- Check disk I/O performance
+
+```bash
+# Use Parquet for better performance
+python historical_cli.py export -s 2024-03-01 -e 2024-03-31 -f parquet -o data.parquet
+
+# Increase concurrency
+python historical_cli.py download -e 2024-03-29 -e 2024-04-26 -c 5
+```
+
+#### 5. Storage Issues
+
+**Problem**: Running out of disk space
+
+**Solutions**:
+- Clear old cache files
+- Export and compress data
+- Use Parquet format (more space-efficient)
+- Delete unnecessary expiry dates
+
+```bash
+# Check current usage
+python historical_cli.py stats
+
+# Clear cache
+python historical_cli.py clear --clear-cache
+
+# Export and compress
+python historical_cli.py export -s 2024-03-01 -e 2024-03-31 -f parquet -o backup.parquet --compress
+```
+
+### Checking Logs
+
+Detailed logs are stored in `logs/app.log`:
+
+```bash
+# View recent logs
+tail -f logs/app.log
+
+# Search for errors
+grep ERROR logs/app.log
+
+# Search for specific operation
+grep "import" logs/app.log
+```
+
+### Database Issues
+
+If the database becomes corrupted:
+
+```bash
+# Backup current database
+cp data/btc_options.db data/btc_options.db.backup
+
+# Clear and rebuild
+python historical_cli.py clear --clear-database
+python historical_cli.py import -d data/downloads
+```
+
+## Best Practices
+
+### 1. Regular Data Updates
+
+Set up a schedule to check for new data:
+
+```bash
+# Weekly cron job (Sunday at 2 AM)
+0 2 * * 0 cd /path/to/BTCOptionsTrading/backend && python historical_cli.py download -e $(date -d "next friday" +\%Y-\%m-\%d)
+```
+
+### 2. Data Validation
+
+Always validate data after import:
+
+```bash
+python historical_cli.py import -d data/downloads --validate --report
+```
+
+### 3. Backup Strategy
+
+Regular backups of your data:
+
+```bash
+# Monthly backup script
+#!/bin/bash
+DATE=$(date +%Y%m)
+python historical_cli.py export \
+  -s 2024-01-01 \
+  -e 2024-12-31 \
+  -f parquet \
+  -o backups/historical_${DATE}.parquet \
+  --compress
+```
+
+### 4. Storage Management
+
+Monitor and manage storage:
+
+```bash
+# Check usage regularly
+python historical_cli.py stats
+
+# Clear old data
+python historical_cli.py clear --clear-cache
+
+# Export before clearing
+python historical_cli.py export -s 2024-01-01 -e 2024-12-31 -o archive.parquet --compress
+```
+
+### 5. Batch Operations
+
+Use batch operations for efficiency:
+
+```bash
+# Download multiple dates at once
+python historical_cli.py download \
+  -e 2024-03-29 \
+  -e 2024-04-26 \
+  -e 2024-05-31 \
+  -c 3
+```
+
+### 6. Data Quality Monitoring
+
+Regularly check data quality:
+
+```bash
+# Weekly quality check
+python historical_cli.py validate -s $(date -d "7 days ago" +%Y-%m-%d) -e $(date +%Y-%m-%d) --detailed
+```
+
+### 7. Performance Optimization
+
+- Use Parquet format for large datasets
+- Limit concurrent downloads to avoid rate limiting
+- Use `--no-validate` for large imports (validate separately)
+- Cache frequently accessed data
+
+## FAQ
+
+### General Questions
+
+**Q: Is the historical data free?**
+A: Yes, CryptoDataDownload provides free historical Deribit options data.
+
+**Q: How far back does the data go?**
+A: It varies by expiry date. Check CryptoDataDownload for available dates.
+
+**Q: How often is new data added?**
+A: CryptoDataDownload typically updates after options expire.
+
+**Q: Can I use this for live trading?**
+A: No, this is historical data for backtesting only. Use the live API for trading.
+
+### Technical Questions
+
+**Q: What database does it use?**
+A: SQLite by default, but the system can be adapted for PostgreSQL.
+
+**Q: How much disk space do I need?**
+A: Approximately 100MB per expiry date, depending on the number of strikes.
+
+**Q: Can I run multiple imports simultaneously?**
+A: No, imports should be run sequentially to avoid database conflicts.
+
+**Q: What's the difference between CSV, JSON, and Parquet exports?**
+A: 
+- CSV: Human-readable, widely compatible, larger file size
+- JSON: Structured, easy to parse, moderate file size
+- Parquet: Columnar, very efficient, smallest file size, fastest to read
+
+### Data Quality Questions
+
+**Q: What if validation fails?**
+A: Review the detailed report, check the data source, and decide whether to use the data or re-download.
+
+**Q: Can I fix data quality issues?**
+A: The system can filter out problematic records during export, but cannot fix source data issues.
+
+**Q: What's a good quality score?**
+A: Above 95 is excellent, 85-95 is good, below 85 requires investigation.
+
+### Backtest Questions
+
+**Q: Can I mix historical and live data?**
+A: Yes, the backtest engine supports hybrid mode.
+
+**Q: What if I'm missing data for my backtest period?**
+A: The system will warn you and suggest downloading the missing data.
+
+**Q: How do I know if my backtest is using historical data?**
+A: Check the backtest configuration or logs for the data source.
+
+## Additional Resources
+
+### Documentation
+
+- **CLI Guide**: `backend/HISTORICAL_CLI_GUIDE.md`
+- **Quick Start**: `backend/HISTORICAL_CLI_QUICKSTART.md`
+- **Design Document**: `.kiro/specs/historical-data-integration/design.md`
+- **Requirements**: `.kiro/specs/historical-data-integration/requirements.md`
+- **API Documentation**: See API section above
+
+### Example Code
+
+- **CLI Examples**: `backend/examples/historical_cli_example.py`
+- **Python SDK Examples**: See "Using the Python SDK" section
+- **API Examples**: See "Using the API" section
+
+### Support
+
+For issues or questions:
+1. Check this guide and the troubleshooting section
+2. Review logs in `logs/app.log`
+3. Consult the design and requirements documents
+4. Check the GitHub issues (if applicable)
+
+## Conclusion
+
+The Historical Options Data Integration system provides a comprehensive solution for managing historical Bitcoin options data. Whether you're using the CLI, REST API, or Python SDK, you have powerful tools to download, validate, store, and use real market data in your backtesting workflows.
+
+Start with the Quick Start section, explore the examples, and refer back to this guide as needed. Happy backtesting!

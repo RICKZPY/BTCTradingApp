@@ -4,6 +4,7 @@
 """
 
 import time
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Dict
@@ -29,7 +30,8 @@ class HistoricalDataManager:
         self,
         download_dir: str = "data/downloads",
         db_path: str = "data/historical_options.db",
-        cache_size_mb: int = 100
+        cache_size_mb: int = 100,
+        min_free_space_gb: float = 1.0
     ):
         """
         初始化管理器
@@ -38,9 +40,11 @@ class HistoricalDataManager:
             download_dir: 下载目录
             db_path: 数据库路径
             cache_size_mb: 缓存大小（MB）
+            min_free_space_gb: 最小可用空间（GB）
         """
         self.download_dir = Path(download_dir)
         self.download_dir.mkdir(parents=True, exist_ok=True)
+        self.min_free_space_gb = min_free_space_gb
         
         # 初始化各个组件
         self.downloader = CryptoDataDownloader(cache_dir=str(self.download_dir))
@@ -52,6 +56,9 @@ class HistoricalDataManager:
             f"HistoricalDataManager initialized: "
             f"download_dir={download_dir}, db_path={db_path}"
         )
+        
+        # 检查存储空间
+        self._check_storage_space()
     
     def import_historical_data(
         self,
@@ -428,6 +435,366 @@ class HistoricalDataManager:
         logger.info(f"Clearing cache (clear_database={clear_database})")
         self.cache.clear_cache(clear_database=clear_database)
     
+    def export_data(
+        self,
+        start_date: datetime,
+        end_date: datetime,
+        output_path: str,
+        format: str = 'csv',
+        instruments: Optional[List[str]] = None,
+        underlying_symbol: Optional[str] = None,
+        compress: bool = False
+    ) -> Dict:
+        """
+        导出历史数据
+        
+        Args:
+            start_date: 开始日期
+            end_date: 结束日期
+            output_path: 输出文件路径
+            format: 导出格式 ('csv', 'json', 'parquet')
+            instruments: 期权合约列表（如果为 None，则导出所有）
+            underlying_symbol: 标的资产符号
+            compress: 是否压缩输出文件
+            
+        Returns:
+            导出结果字典
+        """
+        import csv
+        import json
+        import gzip
+        
+        logger.info(
+            f"Exporting data: {start_date} to {end_date}, "
+            f"format={format}, compress={compress}"
+        )
+        
+        # 查询数据
+        if instruments:
+            # 按合约查询
+            all_data = []
+            for instrument in instruments:
+                data = self.cache.query_option_data(
+                    instrument_name=instrument,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                all_data.extend(data)
+        else:
+            # 查询所有数据
+            all_data = self.cache.query_option_data(
+                start_date=start_date,
+                end_date=end_date,
+                underlying_symbol=underlying_symbol
+            )
+        
+        if not all_data:
+            logger.warning("No data to export")
+            return {
+                'success': False,
+                'records_exported': 0,
+                'file_path': None,
+                'error': 'No data found for the specified criteria'
+            }
+        
+        # 排序数据
+        all_data.sort(key=lambda x: (x.instrument_name, x.timestamp))
+        
+        # 创建输出目录
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 根据格式导出
+        try:
+            if format == 'csv':
+                self._export_csv(all_data, output_file, compress)
+            elif format == 'json':
+                self._export_json(all_data, output_file, compress)
+            elif format == 'parquet':
+                self._export_parquet(all_data, output_file, compress)
+            else:
+                raise ValueError(f"Unsupported format: {format}")
+            
+            # 获取文件大小
+            file_size = output_file.stat().st_size
+            
+            logger.info(
+                f"Export complete: {len(all_data)} records exported to {output_file}, "
+                f"size={file_size / 1024:.2f} KB"
+            )
+            
+            return {
+                'success': True,
+                'records_exported': len(all_data),
+                'file_path': str(output_file),
+                'file_size_bytes': file_size,
+                'format': format,
+                'compressed': compress
+            }
+            
+        except Exception as e:
+            logger.error(f"Export failed: {e}")
+            return {
+                'success': False,
+                'records_exported': 0,
+                'file_path': None,
+                'error': str(e)
+            }
+    
+    def _export_csv(
+        self,
+        data: List[HistoricalOptionData],
+        output_file: Path,
+        compress: bool
+    ):
+        """导出为 CSV 格式"""
+        # 添加 .gz 扩展名（如果压缩）
+        if compress and not str(output_file).endswith('.gz'):
+            output_file = Path(str(output_file) + '.gz')
+        
+        # 打开文件（压缩或非压缩）
+        if compress:
+            file_handle = gzip.open(output_file, 'wt', encoding='utf-8')
+        else:
+            file_handle = open(output_file, 'w', encoding='utf-8', newline='')
+        
+        try:
+            writer = csv.writer(file_handle)
+            
+            # 写入表头
+            writer.writerow([
+                'instrument_name', 'timestamp', 'open_price', 'high_price',
+                'low_price', 'close_price', 'volume', 'strike_price',
+                'expiry_date', 'option_type', 'underlying_symbol', 'data_source'
+            ])
+            
+            # 写入数据
+            for d in data:
+                writer.writerow([
+                    d.instrument_name,
+                    d.timestamp.isoformat(),
+                    float(d.open_price),
+                    float(d.high_price),
+                    float(d.low_price),
+                    float(d.close_price),
+                    float(d.volume),
+                    float(d.strike_price),
+                    d.expiry_date.isoformat(),
+                    d.option_type.value,
+                    d.underlying_symbol,
+                    d.data_source.value
+                ])
+        finally:
+            file_handle.close()
+    
+    def _export_json(
+        self,
+        data: List[HistoricalOptionData],
+        output_file: Path,
+        compress: bool
+    ):
+        """导出为 JSON 格式"""
+        import json
+        import gzip
+        
+        # 添加 .gz 扩展名（如果压缩）
+        if compress and not str(output_file).endswith('.gz'):
+            output_file = Path(str(output_file) + '.gz')
+        
+        # 转换为字典列表
+        data_dicts = []
+        for d in data:
+            data_dicts.append({
+                'instrument_name': d.instrument_name,
+                'timestamp': d.timestamp.isoformat(),
+                'open_price': float(d.open_price),
+                'high_price': float(d.high_price),
+                'low_price': float(d.low_price),
+                'close_price': float(d.close_price),
+                'volume': float(d.volume),
+                'strike_price': float(d.strike_price),
+                'expiry_date': d.expiry_date.isoformat(),
+                'option_type': d.option_type.value,
+                'underlying_symbol': d.underlying_symbol,
+                'data_source': d.data_source.value
+            })
+        
+        # 写入文件
+        if compress:
+            with gzip.open(output_file, 'wt', encoding='utf-8') as f:
+                json.dump(data_dicts, f, indent=2)
+        else:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(data_dicts, f, indent=2)
+    
+    def _export_parquet(
+        self,
+        data: List[HistoricalOptionData],
+        output_file: Path,
+        compress: bool
+    ):
+        """导出为 Parquet 格式"""
+        try:
+            import pandas as pd
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:
+            raise ImportError(
+                "Parquet export requires pandas and pyarrow. "
+                "Install with: pip install pandas pyarrow"
+            )
+        
+        # 转换为 DataFrame
+        data_dicts = []
+        for d in data:
+            data_dicts.append({
+                'instrument_name': d.instrument_name,
+                'timestamp': d.timestamp,
+                'open_price': float(d.open_price),
+                'high_price': float(d.high_price),
+                'low_price': float(d.low_price),
+                'close_price': float(d.close_price),
+                'volume': float(d.volume),
+                'strike_price': float(d.strike_price),
+                'expiry_date': d.expiry_date,
+                'option_type': d.option_type.value,
+                'underlying_symbol': d.underlying_symbol,
+                'data_source': d.data_source.value
+            })
+        
+        df = pd.DataFrame(data_dicts)
+        
+        # 写入 Parquet 文件
+        compression = 'snappy' if compress else None
+        df.to_parquet(output_file, compression=compression, index=False)
+    
+    def _check_storage_space(self, required_gb: float = None) -> bool:
+        """
+        检查存储空间
+        
+        Args:
+            required_gb: 需要的空间（GB），如果为 None 则使用最小值
+            
+        Returns:
+            是否有足够空间
+            
+        Raises:
+            RuntimeError: 如果空间不足
+        """
+        required = required_gb or self.min_free_space_gb
+        
+        # 获取磁盘使用情况
+        stat = shutil.disk_usage(self.download_dir)
+        free_gb = stat.free / (1024 ** 3)
+        total_gb = stat.total / (1024 ** 3)
+        used_gb = stat.used / (1024 ** 3)
+        
+        logger.info(
+            f"Storage check: free={free_gb:.2f}GB, "
+            f"used={used_gb:.2f}GB, total={total_gb:.2f}GB"
+        )
+        
+        if free_gb < required:
+            error_msg = (
+                f"Insufficient storage space: {free_gb:.2f}GB free, "
+                f"{required:.2f}GB required. "
+                f"Please free up space or clear old data."
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        # 警告如果空间不足 2GB
+        if free_gb < 2.0:
+            logger.warning(
+                f"Low storage space: {free_gb:.2f}GB free. "
+                f"Consider clearing old data."
+            )
+        
+        return True
+    
+    def get_storage_info(self) -> Dict:
+        """
+        获取存储信息
+        
+        Returns:
+            存储信息字典
+        """
+        stat = shutil.disk_usage(self.download_dir)
+        
+        return {
+            'free_gb': stat.free / (1024 ** 3),
+            'used_gb': stat.used / (1024 ** 3),
+            'total_gb': stat.total / (1024 ** 3),
+            'free_percentage': (stat.free / stat.total) * 100,
+            'min_required_gb': self.min_free_space_gb
+        }
+    
+    def handle_error(
+        self,
+        error: Exception,
+        operation: str,
+        context: Optional[Dict] = None,
+        notify: bool = True
+    ) -> Dict:
+        """
+        处理错误
+        
+        Args:
+            error: 异常对象
+            operation: 操作名称
+            context: 上下文信息
+            notify: 是否发送通知
+            
+        Returns:
+            错误信息字典
+        """
+        error_info = {
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'operation': operation,
+            'timestamp': datetime.now().isoformat(),
+            'context': context or {}
+        }
+        
+        # 记录错误
+        logger.error(
+            f"Error in {operation}",
+            error_type=error_info['error_type'],
+            error_message=error_info['error_message'],
+            context=error_info['context']
+        )
+        
+        # 发送通知（如果需要）
+        if notify:
+            self._send_error_notification(error_info)
+        
+        return error_info
+    
+    def _send_error_notification(self, error_info: Dict):
+        """
+        发送错误通知
+        
+        Args:
+            error_info: 错误信息
+        """
+        # 这里可以实现各种通知方式：
+        # - 邮件通知
+        # - Slack/Discord webhook
+        # - 系统通知
+        # - 写入专门的错误日志文件
+        
+        # 目前只记录到日志
+        logger.warning(
+            "Error notification",
+            **error_info
+        )
+        
+        # TODO: 实现实际的通知机制
+        # 例如：
+        # - 发送邮件
+        # - 调用 webhook
+        # - 写入监控系统
+    
     def get_stats(self) -> Dict:
         """
         获取统计信息
@@ -436,9 +803,11 @@ class HistoricalDataManager:
             统计信息字典
         """
         cache_stats = self.cache.get_cache_stats()
+        storage_info = self.get_storage_info()
         
         stats = {
             'cache': cache_stats,
+            'storage': storage_info,
             'download_dir': str(self.download_dir),
             'csv_files': len(list(self.download_dir.glob("**/*.csv")))
         }
