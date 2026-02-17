@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试模态框</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .btn {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .btn:hover {
+            background: #2563eb;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            background: #2a2a2a;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>前端测试页面</h1>
+    
+    <button class="btn" onclick="testAPI()">测试API连接</button>
+    <button class="btn" onclick="testCreateStrategy()">测试创建策略</button>
+    
+    <div id="status">
+        <h3>状态:</h3>
+        <pre id="output">等待测试...</pre>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        function log(message) {
+            const output = document.getElementById('output');
+            output.textContent += '\n' + message;
+        }
+        
+        async function testAPI() {
+            log('测试API连接...');
+            try {
+                const response = await fetch(`${API_BASE}/api/strategies/templates/list`);
+                const data = await response.json();
+                log('✓ API连接成功');
+                log(`找到 ${data.templates.length} 个模板`);
+            } catch (error) {
+                log('✗ API连接失败: ' + error.message);
+            }
+        }
+        
+        async function testCreateStrategy() {
+            log('\n测试创建策略...');
+            try {
+                const strategyData = {
+                    name: "测试策略",
+                    description: "这是一个测试策略",
+                    strategy_type: "single_leg",
+                    legs: [{
+                        option_contract: {
+                            instrument_name: "BTC-2024-12-31-50000-C",
+                            underlying: "BTC",
+                            option_type: "call",
+                            strike_price: 50000,
+                            expiration_date: new Date("2024-12-31").toISOString()
+                        },
+                        action: "buy",
+                        quantity: 1
+                    }]
+                };
+                
+                log('发送请求...');
+                const response = await fetch(`${API_BASE}/api/strategies/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(strategyData)
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log('✓ 策略创建成功');
+                    log('策略ID: ' + data.id);
+                } else {
+                    const error = await response.text();
+                    log('✗ 创建失败: ' + error);
+                }
+            } catch (error) {
+                log('✗ 请求失败: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>
