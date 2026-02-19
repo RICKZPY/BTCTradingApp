@@ -258,6 +258,33 @@ class DeribitConnector(IDeribitConnector):
         Returns:
             期权合约对象
         """
+        def safe_decimal(value, default=0):
+            """安全转换为 Decimal"""
+            if value is None or value == "":
+                return Decimal(str(default))
+            try:
+                return Decimal(str(value))
+            except:
+                return Decimal(str(default))
+        
+        def safe_float(value, default=0.0):
+            """安全转换为 float"""
+            if value is None or value == "":
+                return default
+            try:
+                return float(value)
+            except:
+                return default
+        
+        def safe_int(value, default=0):
+            """安全转换为 int"""
+            if value is None or value == "":
+                return default
+            try:
+                return int(value)
+            except:
+                return default
+        
         # 解析期权类型
         option_type = OptionType.CALL if data.get("option_type") == "call" else OptionType.PUT
         
@@ -265,24 +292,30 @@ class DeribitConnector(IDeribitConnector):
         expiration_timestamp = data.get("expiration_timestamp", 0) / 1000
         expiration_date = datetime.fromtimestamp(expiration_timestamp)
         
+        # 获取 Greeks 数据
+        greeks = data.get("greeks", {})
+        
+        # 获取统计数据
+        stats = data.get("stats", {})
+        
         return OptionContract(
             instrument_name=data.get("instrument_name", ""),
             underlying=data.get("base_currency", "BTC"),
             option_type=option_type,
-            strike_price=Decimal(str(data.get("strike", 0))),
+            strike_price=safe_decimal(data.get("strike")),
             expiration_date=expiration_date,
-            current_price=Decimal(str(data.get("mark_price", 0))),
-            bid_price=Decimal(str(data.get("best_bid_price", 0))),
-            ask_price=Decimal(str(data.get("best_ask_price", 0))),
-            last_price=Decimal(str(data.get("last_price", 0))),
-            implied_volatility=float(data.get("mark_iv", 0)) / 100,  # 转换为小数
-            delta=float(data.get("greeks", {}).get("delta", 0)),
-            gamma=float(data.get("greeks", {}).get("gamma", 0)),
-            theta=float(data.get("greeks", {}).get("theta", 0)),
-            vega=float(data.get("greeks", {}).get("vega", 0)),
-            rho=float(data.get("greeks", {}).get("rho", 0)),
-            open_interest=int(data.get("open_interest", 0)),
-            volume=int(data.get("stats", {}).get("volume", 0)),
+            current_price=safe_decimal(data.get("mark_price")),
+            bid_price=safe_decimal(data.get("best_bid_price")),
+            ask_price=safe_decimal(data.get("best_ask_price")),
+            last_price=safe_decimal(data.get("last_price")),
+            implied_volatility=safe_float(data.get("mark_iv")) / 100 if data.get("mark_iv") else 0.0,  # 转换为小数
+            delta=safe_float(greeks.get("delta")),
+            gamma=safe_float(greeks.get("gamma")),
+            theta=safe_float(greeks.get("theta")),
+            vega=safe_float(greeks.get("vega")),
+            rho=safe_float(greeks.get("rho")),
+            open_interest=safe_int(data.get("open_interest")),
+            volume=safe_int(stats.get("volume")),
             timestamp=datetime.now()
         )
     
