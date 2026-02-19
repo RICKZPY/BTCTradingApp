@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import StrikePicker from './StrikePicker'
+import ExpiryPicker from './ExpiryPicker'
 import { dataApi } from '../../api/data'
 
 interface Step2Props {
@@ -25,6 +26,48 @@ const Step2_ParameterConfig = ({
   const [isLoadingOptions, setIsLoadingOptions] = useState(false)
   const [optionsLoadError, setOptionsLoadError] = useState<string | null>(null)
   const [useManualInput, setUseManualInput] = useState(false)
+  const [availableExpiryDates, setAvailableExpiryDates] = useState<string[]>([])
+  const [isLoadingDates, setIsLoadingDates] = useState(false)
+
+  // 加载可用的到期日期
+  const loadAvailableExpiryDates = async () => {
+    try {
+      setIsLoadingDates(true)
+      const rawData = await dataApi.getOptionsChain('BTC')
+      
+      // 提取所有唯一的到期日期
+      const datesSet = new Set<string>()
+      rawData.forEach((option: any) => {
+        if (option.expiration_timestamp) {
+          const date = new Date(option.expiration_timestamp * 1000)
+          const dateStr = date.toISOString().split('T')[0]
+          datesSet.add(dateStr)
+        }
+      })
+      
+      // 转换为数组并排序
+      const sortedDates = Array.from(datesSet).sort()
+      setAvailableExpiryDates(sortedDates)
+    } catch (error) {
+      console.error('加载到期日期失败:', error)
+      // 如果加载失败，生成一些默认日期
+      const defaultDates = []
+      const today = new Date()
+      for (let i = 7; i <= 90; i += 7) {
+        const futureDate = new Date(today)
+        futureDate.setDate(today.getDate() + i)
+        defaultDates.push(futureDate.toISOString().split('T')[0])
+      }
+      setAvailableExpiryDates(defaultDates)
+    } finally {
+      setIsLoadingDates(false)
+    }
+  }
+
+  // 组件加载时获取可用日期
+  useEffect(() => {
+    loadAvailableExpiryDates()
+  }, [])
 
   // 加载期权链数据
   const loadOptionsChain = async (expiryDate: string) => {
@@ -284,16 +327,12 @@ const Step2_ParameterConfig = ({
 
       {/* 到期日 */}
       <div>
-        <label className="block text-sm font-medium text-text-primary mb-2">
-          到期日 *
-        </label>
-        <input
-          type="date"
+        <ExpiryPicker
           value={formData.expiry_date}
-          onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
-          className="input w-full"
-          required
-          min={new Date().toISOString().split('T')[0]}
+          onChange={(date) => setFormData({ ...formData, expiry_date: date })}
+          availableDates={availableExpiryDates}
+          label="到期日"
+          disabled={isLoadingDates}
         />
         
         {optionsLoadError && (
