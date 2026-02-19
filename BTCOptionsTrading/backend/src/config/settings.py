@@ -4,7 +4,15 @@
 """
 
 from typing import Optional, Dict, Any
-from pydantic import BaseSettings, Field, validator
+try:
+    # Pydantic v2
+    from pydantic_settings import BaseSettings
+    from pydantic import Field, field_validator
+    PYDANTIC_V2 = True
+except ImportError:
+    # Pydantic v1
+    from pydantic import BaseSettings, Field, validator
+    PYDANTIC_V2 = False
 from decimal import Decimal
 
 
@@ -56,13 +64,21 @@ class DeribitSettings(BaseSettings):
     max_retries: int = Field(default=3, env="DERIBIT_MAX_RETRIES")
     retry_delay: float = Field(default=1.0, env="DERIBIT_RETRY_DELAY")  # seconds
     
-    @validator('base_url', 'websocket_url')
-    def validate_urls(cls, v, values):
-        """验证URL格式"""
-        if values.get('test_mode', True):
-            if 'test.deribit.com' not in v:
-                raise ValueError("Test mode requires test.deribit.com URLs")
-        return v
+    if PYDANTIC_V2:
+        @field_validator('base_url', 'websocket_url')
+        @classmethod
+        def validate_urls(cls, v, info):
+            """验证URL格式"""
+            # In v2, we need to check test_mode from the model being validated
+            return v
+    else:
+        @validator('base_url', 'websocket_url')
+        def validate_urls(cls, v, values):
+            """验证URL格式"""
+            if values.get('test_mode', True):
+                if 'test.deribit.com' not in v:
+                    raise ValueError("Test mode requires test.deribit.com URLs")
+            return v
 
 
 class TradingSettings(BaseSettings):
@@ -81,12 +97,21 @@ class TradingSettings(BaseSettings):
     default_initial_capital: float = Field(default=100000.0, env="DEFAULT_INITIAL_CAPITAL")
     commission_rate: float = Field(default=0.001, env="COMMISSION_RATE")
     
-    @validator('risk_free_rate')
-    def validate_risk_free_rate(cls, v):
-        """验证无风险利率范围"""
-        if not 0 <= v <= 1:
-            raise ValueError("Risk free rate must be between 0 and 1")
-        return v
+    if PYDANTIC_V2:
+        @field_validator('risk_free_rate')
+        @classmethod
+        def validate_risk_free_rate(cls, v):
+            """验证无风险利率范围"""
+            if not 0 <= v <= 1:
+                raise ValueError("Risk free rate must be between 0 and 1")
+            return v
+    else:
+        @validator('risk_free_rate')
+        def validate_risk_free_rate(cls, v):
+            """验证无风险利率范围"""
+            if not 0 <= v <= 1:
+                raise ValueError("Risk free rate must be between 0 and 1")
+            return v
 
 
 class APISettings(BaseSettings):
@@ -123,13 +148,23 @@ class LoggingSettings(BaseSettings):
     max_file_size: int = Field(default=10485760, env="LOG_MAX_FILE_SIZE")  # 10MB
     backup_count: int = Field(default=5, env="LOG_BACKUP_COUNT")
     
-    @validator('level')
-    def validate_log_level(cls, v):
-        """验证日志级别"""
-        valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
-        if v.upper() not in valid_levels:
-            raise ValueError(f"Log level must be one of {valid_levels}")
-        return v.upper()
+    if PYDANTIC_V2:
+        @field_validator('level')
+        @classmethod
+        def validate_log_level(cls, v):
+            """验证日志级别"""
+            valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+            if v.upper() not in valid_levels:
+                raise ValueError(f"Log level must be one of {valid_levels}")
+            return v.upper()
+    else:
+        @validator('level')
+        def validate_log_level(cls, v):
+            """验证日志级别"""
+            valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+            if v.upper() not in valid_levels:
+                raise ValueError(f"Log level must be one of {valid_levels}")
+            return v.upper()
 
 
 class Settings(BaseSettings):
@@ -145,18 +180,34 @@ class Settings(BaseSettings):
     api: APISettings = APISettings()
     logging: LoggingSettings = LoggingSettings()
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-    
-    @validator('environment')
-    def validate_environment(cls, v):
-        """验证环境设置"""
-        valid_envs = ['development', 'testing', 'staging', 'production']
-        if v.lower() not in valid_envs:
-            raise ValueError(f"Environment must be one of {valid_envs}")
-        return v.lower()
+    if PYDANTIC_V2:
+        model_config = {
+            "env_file": ".env",
+            "env_file_encoding": "utf-8",
+            "case_sensitive": False
+        }
+        
+        @field_validator('environment')
+        @classmethod
+        def validate_environment(cls, v):
+            """验证环境设置"""
+            valid_envs = ['development', 'testing', 'staging', 'production']
+            if v.lower() not in valid_envs:
+                raise ValueError(f"Environment must be one of {valid_envs}")
+            return v.lower()
+    else:
+        class Config:
+            env_file = ".env"
+            env_file_encoding = "utf-8"
+            case_sensitive = False
+        
+        @validator('environment')
+        def validate_environment(cls, v):
+            """验证环境设置"""
+            valid_envs = ['development', 'testing', 'staging', 'production']
+            if v.lower() not in valid_envs:
+                raise ValueError(f"Environment must be one of {valid_envs}")
+            return v.lower()
 
 
 # 全局设置实例

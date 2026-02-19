@@ -2,6 +2,7 @@
 fastapi==0.103.2
 uvicorn==0.22.0
 pydantic==1.10.12
+pydantic-settings>=2.0.0  # For Pydantic v2 compatibility
 websockets==10.4  # WebSocket support
 
 # Mathematical libraries
