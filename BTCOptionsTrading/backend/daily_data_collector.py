@@ -20,7 +20,9 @@ from src.connectors.deribit_connector import DeribitConnector
 from src.config.settings import Settings
 from src.config.logging_config import get_logger
 from src.historical.manager import HistoricalDataManager
-from src.historical.models import HistoricalOptionData
+from src.historical.models import HistoricalOptionData, DataSource
+from src.core.models import OptionType
+from decimal import Decimal
 
 logger = get_logger(__name__)
 
@@ -184,19 +186,18 @@ class DailyDataCollector:
             
             for option in options_data:
                 record = HistoricalOptionData(
-                    timestamp=timestamp,
                     instrument_name=option.instrument_name,
+                    timestamp=timestamp,
                     underlying_symbol=self.currency,
-                    strike_price=float(option.strike_price),
+                    strike_price=Decimal(str(option.strike_price)),
                     expiry_date=option.expiration_date,
-                    option_type=option.option_type.value if hasattr(option.option_type, 'value') else str(option.option_type),
-                    open_price=float(option.current_price),  # 使用current_price作为开盘价
-                    high_price=float(option.current_price),
-                    low_price=float(option.current_price),
-                    close_price=float(option.current_price),
-                    volume=float(option.volume),
-                    open_interest=int(option.open_interest),
-                    implied_volatility=float(option.implied_volatility)
+                    option_type=option.option_type if isinstance(option.option_type, OptionType) else OptionType.CALL,
+                    open_price=Decimal(str(option.current_price)),
+                    high_price=Decimal(str(option.current_price)),
+                    low_price=Decimal(str(option.current_price)),
+                    close_price=Decimal(str(option.current_price)),
+                    volume=Decimal(str(option.volume)),
+                    data_source=DataSource.DERIBIT
                 )
                 historical_records.append(record)
             
