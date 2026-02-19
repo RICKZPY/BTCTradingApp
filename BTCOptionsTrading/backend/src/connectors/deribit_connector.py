@@ -179,7 +179,7 @@ class DeribitConnector(IDeribitConnector):
     
     async def get_options_chain(self, currency: str = "BTC") -> List[OptionContract]:
         """
-        获取期权链数据
+        获取期权链数据（包含实时市场数据）
         
         Args:
             currency: 货币类型（默认BTC）
@@ -201,7 +201,15 @@ class DeribitConnector(IDeribitConnector):
             contracts = []
             for instrument in result:
                 try:
-                    contract = self._parse_option_contract(instrument)
+                    # 获取每个合约的实时市场数据
+                    ticker_data = await self._request(
+                        "public/ticker",
+                        {"instrument_name": instrument.get("instrument_name")}
+                    )
+                    
+                    # 合并基本信息和市场数据
+                    instrument_data = {**instrument, **ticker_data}
+                    contract = self._parse_option_contract(instrument_data)
                     contracts.append(contract)
                 except Exception as e:
                     logger.warning(
