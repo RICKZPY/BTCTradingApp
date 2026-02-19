@@ -109,6 +109,8 @@ const StrikePicker = ({
                   <span className="ml-2 text-xs text-accent-blue">(ATM)</span>
                 )}
               </span>
+            ) : disabled && optionsData.length === 0 ? (
+              '请先选择到期日期'
             ) : optionsData.length === 0 ? (
               '无可用期权数据'
             ) : (
