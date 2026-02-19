@@ -1,110 +1,98 @@
+#!/usr/bin/env python3
 """
-测试Deribit API连接
+测试 Deribit API 数据获取
+验证 bid/ask/volume 等市场数据是否正确获取
 """
-import asyncio
-import httpx
 
-async def test_deribit_api():
-    """测试Deribit API"""
+import asyncio
+import sys
+from pathlib import Path
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src.connectors.deribit_connector import DeribitConnector
+
+
+async def test_api():
+    """测试 API 数据获取"""
+    connector = DeribitConnector()
     
-    api_key = "vXkaBDto"
-    api_secret = "J54Ccsff9g5PlYK-ELRVunkvnST-cZ6puVBXbhwYrnY"
-    base_url = "https://test.deribit.com"
-    
-    client = httpx.AsyncClient(base_url=base_url, timeout=30.0)
-    
-    print("=" * 60)
-    print("测试 Deribit 测试环境 API")
-    print("=" * 60)
-    
-    # 测试1: 获取服务器时间（不需要认证）
-    print("\n1. 测试公共API - 获取服务器时间...")
     try:
-        request_data = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "public/get_time"
-        }
-        response = await client.post("/api/v2/public/", json=request_data)
-        data = response.json()
-        if "result" in data:
-            print(f"   ✅ 成功! 服务器时间: {data['result']}")
-        else:
-            print(f"   ❌ 失败: {data}")
+        print("=" * 80)
+        print("测试 Deribit API 数据获取")
+        print("=" * 80)
+        
+        # 获取 BTC 期权链
+        print("\n正在获取 BTC 期权数据...")
+        options = await connector.get_options_chain("BTC")
+        
+        print(f"\n总共获取到 {len(options)} 个期权合约")
+        
+        # 显示前 5 个合约的详细信息
+        print("\n" + "=" * 80)
+        print("前 5 个合约的详细信息：")
+        print("=" * 80)
+        
+        for i, option in enumerate(options[:5]):
+            print(f"\n合约 #{i+1}:")
+            print(f"  名称: {option.instrument_name}")
+            print(f"  类型: {option.option_type.value}")
+            print(f"  执行价: ${option.strike_price}")
+            print(f"  到期日: {option.expiration_date.strftime('%Y-%m-%d')}")
+            print(f"  当前价格: ${option.current_price}")
+            print(f"  买价 (bid): ${option.bid_price}")
+            print(f"  卖价 (ask): ${option.ask_price}")
+            print(f"  最后成交价: ${option.last_price}")
+            print(f"  成交量: {option.volume}")
+            print(f"  持仓量: {option.open_interest}")
+            print(f"  隐含波动率: {option.implied_volatility:.2%}")
+            print(f"  Delta: {option.delta:.4f}")
+            print(f"  Gamma: {option.gamma:.4f}")
+            print(f"  Vega: {option.vega:.4f}")
+        
+        # 统计有效数据
+        print("\n" + "=" * 80)
+        print("数据质量统计：")
+        print("=" * 80)
+        
+        total = len(options)
+        has_bid = sum(1 for o in options if o.bid_price > 0)
+        has_ask = sum(1 for o in options if o.ask_price > 0)
+        has_volume = sum(1 for o in options if o.volume > 0)
+        has_oi = sum(1 for o in options if o.open_interest > 0)
+        
+        print(f"\n总合约数: {total}")
+        print(f"有买价的合约: {has_bid} ({has_bid/total*100:.1f}%)")
+        print(f"有卖价的合约: {has_ask} ({has_ask/total*100:.1f}%)")
+        print(f"有成交量的合约: {has_volume} ({has_volume/total*100:.1f}%)")
+        print(f"有持仓量的合约: {has_oi} ({has_oi/total*100:.1f}%)")
+        
+        # 找出成交量最大的 5 个合约
+        print("\n" + "=" * 80)
+        print("成交量最大的 5 个合约：")
+        print("=" * 80)
+        
+        sorted_by_volume = sorted(options, key=lambda x: x.volume, reverse=True)[:5]
+        for i, option in enumerate(sorted_by_volume):
+            print(f"\n#{i+1}: {option.instrument_name}")
+            print(f"  成交量: {option.volume}")
+            print(f"  买价: ${option.bid_price}")
+            print(f"  卖价: ${option.ask_price}")
+            print(f"  持仓量: {option.open_interest}")
+        
+        print("\n" + "=" * 80)
+        print("测试完成！")
+        print("=" * 80)
+        
     except Exception as e:
-        print(f"   ❌ 错误: {str(e)}")
+        print(f"\n错误: {str(e)}")
+        import traceback
+        traceback.print_exc()
     
-    # 测试2: 获取BTC指数价格
-    print("\n2. 测试获取BTC指数价格...")
-    try:
-        request_data = {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "public/get_index_price",
-            "params": {"index_name": "btc_usd"}
-        }
-        response = await client.post("/api/v2/public/", json=request_data)
-        data = response.json()
-        if "result" in data:
-            print(f"   ✅ 成功! BTC指数价格: ${data['result']['index_price']:,.2f}")
-        else:
-            print(f"   ❌ 失败: {data}")
-    except Exception as e:
-        print(f"   ❌ 错误: {str(e)}")
-    
-    # 测试3: 获取期权合约列表
-    print("\n3. 测试获取BTC期权合约...")
-    try:
-        request_data = {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "public/get_instruments",
-            "params": {
-                "currency": "BTC",
-                "kind": "option",
-                "expired": False
-            }
-        }
-        response = await client.post("/api/v2/public/", json=request_data)
-        data = response.json()
-        if "result" in data:
-            instruments = data['result']
-            print(f"   ✅ 成功! 找到 {len(instruments)} 个期权合约")
-            if instruments:
-                print(f"   示例合约: {instruments[0]['instrument_name']}")
-        else:
-            print(f"   ❌ 失败: {data}")
-    except Exception as e:
-        print(f"   ❌ 错误: {str(e)}")
-    
-    # 测试4: 认证测试
-    print("\n4. 测试API认证...")
-    try:
-        request_data = {
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "public/auth",
-            "params": {
-                "grant_type": "client_credentials",
-                "client_id": api_key,
-                "client_secret": api_secret
-            }
-        }
-        response = await client.post("/api/v2/public/", json=request_data)
-        data = response.json()
-        if "result" in data:
-            print(f"   ✅ 认证成功!")
-            print(f"   Access Token: {data['result']['access_token'][:20]}...")
-        else:
-            print(f"   ❌ 认证失败: {data}")
-    except Exception as e:
-        print(f"   ❌ 错误: {str(e)}")
-    
-    await client.aclose()
-    
-    print("\n" + "=" * 60)
-    print("测试完成")
-    print("=" * 60)
+    finally:
+        await connector.close()
+
 
 if __name__ == "__main__":
-    asyncio.run(test_deribit_api())
+    asyncio.run(test_api())
