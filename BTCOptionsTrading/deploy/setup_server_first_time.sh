@@ -1,119 +1,187 @@
 #!/bin/bash
 
-# First-Time Server Setup Script for Daily Data Collector
-# This script sets up the project on a fresh server
+# ============================================================================
+# First-Time Server Setup Script for BTC Options Trading System
+# ============================================================================
+# This script sets up the server environment for the first time
+# Run this ONCE after cloning the project to the server
+#
+# Usage:
+#   chmod +x setup_server_first_time.sh
+#   ./setup_server_first_time.sh
+# ============================================================================
 
 set -e  # Exit on any error
 
 echo "=========================================="
-echo "First-Time Server Setup"
+echo "BTC Options Trading - First Time Setup"
 echo "=========================================="
 echo ""
 
-# Configuration
-REPO_URL="https://github.com/RICKZPY/BTCTradingApp.git"
-PROJECT_DIR="/root/BTCTradingApp"
-BACKEND_DIR="$PROJECT_DIR/BTCOptionsTrading/backend"
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# Step 1: Check if git is installed
-echo "Step 1: Checking git installation..."
-if ! command -v git &> /dev/null; then
-    echo "Git not found. Installing git..."
-    yum install -y git || apt-get install -y git
-else
-    echo "✓ Git is already installed"
-fi
+# Get the script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+BACKEND_DIR="$PROJECT_ROOT/backend"
 
-# Step 2: Check if Python 3 is installed
+echo "Project root: $PROJECT_ROOT"
+echo "Backend directory: $BACKEND_DIR"
 echo ""
-echo "Step 2: Checking Python 3 installation..."
+
+# ============================================================================
+# Step 1: Check Python version
+# ============================================================================
+echo -e "${YELLOW}Step 1: Checking Python version...${NC}"
 if ! command -v python3 &> /dev/null; then
-    echo "Python 3 not found. Installing Python 3..."
-    yum install -y python3 python3-pip || apt-get install -y python3 python3-pip
-else
-    echo "✓ Python 3 is already installed"
-    python3 --version
+    echo -e "${RED}Error: python3 is not installed${NC}"
+    echo "Please install Python 3.7 or higher first"
+    exit 1
 fi
 
-# Step 3: Clone or update repository
+PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
+echo -e "${GREEN}✓ Python version: $PYTHON_VERSION${NC}"
 echo ""
-echo "Step 3: Setting up repository..."
-if [ -d "$PROJECT_DIR" ]; then
-    echo "Project directory exists. Pulling latest changes..."
-    cd "$PROJECT_DIR"
-    git pull origin main || git pull origin master
-else
-    echo "Cloning repository..."
-    git clone "$REPO_URL" "$PROJECT_DIR"
-fi
 
-# Step 4: Navigate to backend directory
+# ============================================================================
+# Step 2: Check pip
+# ============================================================================
+echo -e "${YELLOW}Step 2: Checking pip...${NC}"
+if ! command -v pip3 &> /dev/null; then
+    echo -e "${RED}Error: pip3 is not installed${NC}"
+    echo "Installing pip3..."
+    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+    python3 get-pip.py
+    rm get-pip.py
+fi
+echo -e "${GREEN}✓ pip3 is available${NC}"
 echo ""
-echo "Step 4: Navigating to backend directory..."
+
+# ============================================================================
+# Step 3: Upgrade pip
+# ============================================================================
+echo -e "${YELLOW}Step 3: Upgrading pip...${NC}"
+pip3 install --upgrade pip
+echo -e "${GREEN}✓ pip upgraded${NC}"
+echo ""
+
+# ============================================================================
+# Step 4: Install Python dependencies
+# ============================================================================
+echo -e "${YELLOW}Step 4: Installing Python dependencies...${NC}"
 cd "$BACKEND_DIR"
-echo "✓ Current directory: $(pwd)"
 
-# Step 5: Install Python dependencies
-echo ""
-echo "Step 5: Installing Python dependencies..."
-if [ -f "requirements.txt" ]; then
-    pip3 install -r requirements.txt
-    echo "✓ Dependencies installed"
-else
-    echo "⚠ Warning: requirements.txt not found"
+if [ ! -f "requirements.txt" ]; then
+    echo -e "${RED}Error: requirements.txt not found in $BACKEND_DIR${NC}"
+    exit 1
 fi
 
-# Step 6: Create necessary directories
-echo ""
-echo "Step 6: Creating necessary directories..."
-mkdir -p logs
-mkdir -p data/daily_snapshots
-mkdir -p data/downloads
-mkdir -p data/exports
-echo "✓ Directories created"
+echo "Installing from requirements.txt..."
+pip3 install -r requirements.txt
 
-# Step 7: Set permissions
+echo -e "${GREEN}✓ All Python dependencies installed${NC}"
 echo ""
-echo "Step 7: Setting file permissions..."
-chmod +x daily_data_collector.py
-chmod +x setup_daily_collection.sh
-echo "✓ Permissions set"
 
-# Step 8: Test the collector
-echo ""
-echo "Step 8: Testing data collector..."
-echo "Running test collection for BTC..."
-python3 daily_data_collector.py --currency BTC --test
+# ============================================================================
+# Step 5: Create necessary directories
+# ============================================================================
+echo -e "${YELLOW}Step 5: Creating necessary directories...${NC}"
+mkdir -p "$BACKEND_DIR/data/downloads"
+mkdir -p "$BACKEND_DIR/data/exports"
+mkdir -p "$BACKEND_DIR/logs"
+mkdir -p "$BACKEND_DIR/config"
+mkdir -p "$BACKEND_DIR/backups"
 
-# Step 9: Setup cron job
+echo -e "${GREEN}✓ Directories created${NC}"
 echo ""
-echo "Step 9: Setting up daily cron job..."
-read -p "Do you want to setup the daily cron job now? (y/n) " -n 1 -r
+
+# ============================================================================
+# Step 6: Set up environment file
+# ============================================================================
+echo -e "${YELLOW}Step 6: Setting up environment file...${NC}"
+if [ ! -f "$BACKEND_DIR/.env" ]; then
+    if [ -f "$BACKEND_DIR/.env.example" ]; then
+        cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"
+        echo -e "${GREEN}✓ Created .env from .env.example${NC}"
+        echo -e "${YELLOW}⚠ Please edit .env file with your configuration${NC}"
+    else
+        echo -e "${YELLOW}⚠ No .env.example found, skipping${NC}"
+    fi
+else
+    echo -e "${GREEN}✓ .env file already exists${NC}"
+fi
+echo ""
+
+# ============================================================================
+# Step 7: Test daily data collector
+# ============================================================================
+echo -e "${YELLOW}Step 7: Testing daily data collector...${NC}"
+cd "$BACKEND_DIR"
+
+if [ ! -f "daily_data_collector.py" ]; then
+    echo -e "${RED}Error: daily_data_collector.py not found${NC}"
+    exit 1
+fi
+
+echo "Running test collection (this may take a minute)..."
+if python3 daily_data_collector.py --currency BTC --test; then
+    echo -e "${GREEN}✓ Data collector test successful${NC}"
+else
+    echo -e "${YELLOW}⚠ Data collector test failed, but continuing...${NC}"
+fi
+echo ""
+
+# ============================================================================
+# Step 8: Set up cron job (optional)
+# ============================================================================
+echo -e "${YELLOW}Step 8: Cron job setup${NC}"
+read -p "Do you want to set up automatic daily data collection? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    ./setup_daily_collection.sh
-    echo "✓ Cron job configured"
+    if [ -f "$BACKEND_DIR/setup_daily_collection.sh" ]; then
+        chmod +x "$BACKEND_DIR/setup_daily_collection.sh"
+        bash "$BACKEND_DIR/setup_daily_collection.sh"
+    else
+        echo -e "${RED}Error: setup_daily_collection.sh not found${NC}"
+    fi
 else
-    echo "⚠ Skipped cron job setup. Run './setup_daily_collection.sh' manually later."
+    echo "Skipping cron job setup"
+    echo "You can set it up later by running: ./backend/setup_daily_collection.sh"
 fi
+echo ""
 
-# Step 10: Summary
+# ============================================================================
+# Summary
+# ============================================================================
 echo ""
 echo "=========================================="
-echo "Setup Complete!"
+echo -e "${GREEN}Setup Complete!${NC}"
 echo "=========================================="
 echo ""
-echo "Project location: $BACKEND_DIR"
-echo "Logs location: $BACKEND_DIR/logs"
-echo "Data location: $BACKEND_DIR/data/daily_snapshots"
+echo "What was installed:"
+echo "  ✓ Python dependencies from requirements.txt"
+echo "  ✓ Directory structure created"
+echo "  ✓ Environment file configured"
+echo "  ✓ Data collector tested"
 echo ""
-echo "To manually run the collector:"
-echo "  cd $BACKEND_DIR"
-echo "  python3 daily_data_collector.py --currency BTC"
+echo "Next steps:"
+echo "  1. Edit backend/.env with your configuration"
+echo "  2. Test the data collector manually:"
+echo "     cd $BACKEND_DIR"
+echo "     python3 daily_data_collector.py --currency BTC"
 echo ""
-echo "To check cron jobs:"
-echo "  crontab -l"
+echo "  3. Start the backend API:"
+echo "     cd $BACKEND_DIR"
+echo "     python3 run_api.py"
 echo ""
-echo "To view logs:"
-echo "  tail -f $BACKEND_DIR/logs/daily_collector.log"
+echo "  4. View collected data:"
+echo "     ls -lh $BACKEND_DIR/data/"
+echo ""
+echo "For more information, see:"
+echo "  - backend/DAILY_COLLECTION_GUIDE.md"
+echo "  - deploy/COLLECTOR_DEPLOYMENT.md"
 echo ""

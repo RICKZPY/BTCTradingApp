@@ -1,11 +1,27 @@
 # 数据采集器部署指南
 
+## 🚀 首次部署？请先看这里！
+
+如果这是你第一次在服务器上设置项目，请先运行一键设置脚本：
+
+```bash
+cd /root/BTCTradingApp/BTCOptionsTrading
+chmod +x deploy/setup_server_first_time.sh
+./deploy/setup_server_first_time.sh
+```
+
+这个脚本会自动安装所有依赖、创建目录、测试采集器。
+
+**详细说明**: 参见 `deploy/SERVER_FIRST_TIME_SETUP.md`
+
+---
+
 ## 快速部署到阿里云服务器
 
 服务器信息：
 - IP: 47.86.62.200
 - 用户: root
-- 项目目录: /root/BTCOptionsTrading
+- 项目目录: /root/BTCTradingApp/BTCOptionsTrading
 
 ## 方法1: 使用部署脚本（推荐）
 
