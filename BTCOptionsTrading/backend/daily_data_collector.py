@@ -197,7 +197,7 @@ class DailyDataCollector:
                     low_price=Decimal(str(option.current_price)),
                     close_price=Decimal(str(option.current_price)),
                     volume=Decimal(str(option.volume)),
-                    data_source=DataSource.DERIBIT
+                    data_source=DataSource.DERIBIT_API
                 )
                 historical_records.append(record)
             
