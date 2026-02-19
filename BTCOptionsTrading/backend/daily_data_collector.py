@@ -134,29 +134,26 @@ class DailyDataCollector:
                 writer.writeheader()
                 
                 for option in options_data:
-                    # 转换时间戳
-                    expiry_timestamp = option.get('expiration_timestamp', 0)
-                    expiry_date = datetime.fromtimestamp(expiry_timestamp) if expiry_timestamp else None
-                    
+                    # OptionContract is a dataclass, access attributes directly
                     row = {
                         'timestamp': timestamp.isoformat(),
-                        'instrument_name': option.get('instrument_name', ''),
+                        'instrument_name': option.instrument_name,
                         'underlying_symbol': self.currency,
-                        'strike_price': option.get('strike', 0),
-                        'expiry_date': expiry_date.isoformat() if expiry_date else '',
-                        'option_type': option.get('option_type', ''),
-                        'mark_price': option.get('mark_price', 0),
-                        'bid_price': option.get('bid_price', 0),
-                        'ask_price': option.get('ask_price', 0),
-                        'last_price': option.get('last_price', 0),
-                        'volume': option.get('volume', 0),
-                        'open_interest': option.get('open_interest', 0),
-                        'implied_volatility': option.get('implied_volatility', 0),
-                        'delta': option.get('greeks', {}).get('delta', 0),
-                        'gamma': option.get('greeks', {}).get('gamma', 0),
-                        'theta': option.get('greeks', {}).get('theta', 0),
-                        'vega': option.get('greeks', {}).get('vega', 0),
-                        'rho': option.get('greeks', {}).get('rho', 0)
+                        'strike_price': float(option.strike_price),
+                        'expiry_date': option.expiration_date.isoformat() if option.expiration_date else '',
+                        'option_type': option.option_type.value if hasattr(option.option_type, 'value') else str(option.option_type),
+                        'mark_price': float(option.current_price),
+                        'bid_price': float(option.bid_price),
+                        'ask_price': float(option.ask_price),
+                        'last_price': float(option.last_price),
+                        'volume': option.volume,
+                        'open_interest': option.open_interest,
+                        'implied_volatility': option.implied_volatility,
+                        'delta': option.delta,
+                        'gamma': option.gamma,
+                        'theta': option.theta,
+                        'vega': option.vega,
+                        'rho': option.rho
                     }
                     writer.writerow(row)
             
@@ -186,24 +183,20 @@ class DailyDataCollector:
             historical_records = []
             
             for option in options_data:
-                # 转换时间戳
-                expiry_timestamp = option.get('expiration_timestamp', 0)
-                expiry_date = datetime.fromtimestamp(expiry_timestamp) if expiry_timestamp else datetime.now()
-                
                 record = HistoricalOptionData(
                     timestamp=timestamp,
-                    instrument_name=option.get('instrument_name', ''),
+                    instrument_name=option.instrument_name,
                     underlying_symbol=self.currency,
-                    strike_price=float(option.get('strike', 0)),
-                    expiry_date=expiry_date,
-                    option_type=option.get('option_type', 'call'),
-                    open_price=float(option.get('mark_price', 0)),  # 使用mark_price作为开盘价
-                    high_price=float(option.get('mark_price', 0)),
-                    low_price=float(option.get('mark_price', 0)),
-                    close_price=float(option.get('mark_price', 0)),
-                    volume=float(option.get('volume', 0)),
-                    open_interest=int(option.get('open_interest', 0)),
-                    implied_volatility=float(option.get('implied_volatility', 0))
+                    strike_price=float(option.strike_price),
+                    expiry_date=option.expiration_date,
+                    option_type=option.option_type.value if hasattr(option.option_type, 'value') else str(option.option_type),
+                    open_price=float(option.current_price),  # 使用current_price作为开盘价
+                    high_price=float(option.current_price),
+                    low_price=float(option.current_price),
+                    close_price=float(option.current_price),
+                    volume=float(option.volume),
+                    open_interest=int(option.open_interest),
+                    implied_volatility=float(option.implied_volatility)
                 )
                 historical_records.append(record)
             
