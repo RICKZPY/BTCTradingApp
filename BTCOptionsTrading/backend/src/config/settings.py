@@ -42,6 +42,14 @@ class DatabaseSettings(BaseSettings):
     influxdb_org: str = Field(default="btc-options", env="INFLUXDB_ORG")
     influxdb_bucket: str = Field(default="market-data", env="INFLUXDB_BUCKET")
     
+    if PYDANTIC_V2:
+        model_config = {
+            "extra": "ignore"  # 忽略额外字段
+        }
+    else:
+        class Config:
+            extra = "ignore"
+    
     @property
     def postgres_url(self) -> str:
         """PostgreSQL连接URL"""
@@ -63,6 +71,14 @@ class DeribitSettings(BaseSettings):
     rate_limit_window: int = Field(default=1, env="DERIBIT_RATE_WINDOW")  # seconds
     max_retries: int = Field(default=3, env="DERIBIT_MAX_RETRIES")
     retry_delay: float = Field(default=1.0, env="DERIBIT_RETRY_DELAY")  # seconds
+    
+    if PYDANTIC_V2:
+        model_config = {
+            "extra": "ignore"
+        }
+    else:
+        class Config:
+            extra = "ignore"
     
     if PYDANTIC_V2:
         @field_validator('base_url', 'websocket_url')
@@ -98,6 +114,14 @@ class TradingSettings(BaseSettings):
     commission_rate: float = Field(default=0.001, env="COMMISSION_RATE")
     
     if PYDANTIC_V2:
+        model_config = {
+            "extra": "ignore"
+        }
+    else:
+        class Config:
+            extra = "ignore"
+    
+    if PYDANTIC_V2:
         @field_validator('risk_free_rate')
         @classmethod
         def validate_risk_free_rate(cls, v):
@@ -129,6 +153,14 @@ class APISettings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(default=30, env="JWT_EXPIRE_MINUTES")
     
+    if PYDANTIC_V2:
+        model_config = {
+            "extra": "ignore"
+        }
+    else:
+        class Config:
+            extra = "ignore"
+    
     @property
     def cors_origins_list(self):
         """CORS origins as list"""
@@ -147,6 +179,14 @@ class LoggingSettings(BaseSettings):
     file_path: str = Field(default="logs/app.log", env="LOG_FILE_PATH")
     max_file_size: int = Field(default=10485760, env="LOG_MAX_FILE_SIZE")  # 10MB
     backup_count: int = Field(default=5, env="LOG_BACKUP_COUNT")
+    
+    if PYDANTIC_V2:
+        model_config = {
+            "extra": "ignore"
+        }
+    else:
+        class Config:
+            extra = "ignore"
     
     if PYDANTIC_V2:
         @field_validator('level')
@@ -184,7 +224,8 @@ class Settings(BaseSettings):
         model_config = {
             "env_file": ".env",
             "env_file_encoding": "utf-8",
-            "case_sensitive": False
+            "case_sensitive": False,
+            "extra": "ignore"  # 忽略额外字段
         }
         
         @field_validator('environment')
