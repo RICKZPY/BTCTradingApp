@@ -202,9 +202,9 @@ class DailyDataCollector:
                 historical_records.append(record)
             
             # 保存到数据库
-            self.manager.cache.store_batch(historical_records)
+            saved_count = self.manager.cache.store_historical_data(historical_records)
             
-            logger.info(f"Successfully saved {len(historical_records)} records to database")
+            logger.info(f"Successfully saved {saved_count} records to database")
             
         except Exception as e:
             logger.error(f"Failed to save to database: {str(e)}")
