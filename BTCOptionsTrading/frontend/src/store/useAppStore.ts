@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type TabType = 'strategies' | 'backtest' | 'options-chain' | 'volatility' | 'settings'
+export type TabType = 'strategies' | 'backtest' | 'options-chain' | 'volatility' | 'historical-data' | 'settings'
 
 interface AppState {
   // 当前激活的Tab

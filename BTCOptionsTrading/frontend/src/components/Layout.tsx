@@ -6,6 +6,7 @@ import StrategiesTab from './tabs/StrategiesTab'
 import BacktestTab from './tabs/BacktestTab'
 import OptionsChainTab from './tabs/OptionsChainTab'
 import VolatilityTab from './tabs/VolatilityTab'
+import HistoricalDataTab from './tabs/HistoricalDataTab'
 import SettingsTab from './tabs/SettingsTab'
 import Toast from './Toast'
 
@@ -36,6 +37,8 @@ const Layout = () => {
         return <OptionsChainTab />
       case 'volatility':
         return <VolatilityTab />
+      case 'historical-data':
+        return <HistoricalDataTab />
       case 'settings':
         return <SettingsTab />
       default:

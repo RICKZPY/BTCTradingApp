@@ -6,6 +6,7 @@ const tabs: { id: TabType; label: string; icon: string }[] = [
   { id: 'backtest', label: '回测分析', icon: '📈' },
   { id: 'options-chain', label: '期权链', icon: '🔗' },
   { id: 'volatility', label: '波动率', icon: '📉' },
+  { id: 'historical-data', label: '历史数据', icon: '📚' },
   { id: 'settings', label: '设置', icon: '⚙️' },
 ]
 
