@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV API 测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-left: 4px solid #007bff;
+            border-radius: 4px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px 5px 5px 0;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .info {
+            color: #17a2b8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CSV API 测试工具</h1>
+        
+        <div class="test-section">
+            <h2>1. 测试 /api/csv/summary</h2>
+            <button onclick="testSummary()">获取数据摘要</button>
+            <div id="summary-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>2. 测试 /api/csv/contracts</h2>
+            <button onclick="testContracts()">获取合约列表</button>
+            <div id="contracts-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>3. 测试 /api/csv/contract/{name}</h2>
+            <input type="text" id="contract-name" placeholder="输入合约名称，如: BTC-13MAR26-100000-C" style="width: 300px; padding: 8px;">
+            <button onclick="testContractData()">获取合约数据</button>
+            <div id="contract-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>4. API 状态检查</h2>
+            <button onclick="checkApiStatus()">检查 API 状态</button>
+            <div id="status-result" class="result"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        function log(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'success' ? 'success' : type === 'error' ? 'error' : 'info';
+            element.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            element.scrollTop = element.scrollHeight;
+        }
+
+        function clearLog(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        async function testSummary() {
+            clearLog('summary-result');
+            log('summary-result', '正在获取数据摘要...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/csv/summary`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const data = await response.json();
+                log('summary-result', `✓ 成功`, 'success');
+                log('summary-result', `文件数: ${data.total_files}`);
+                log('summary-result', `记录数: ${data.total_records}`);
+                log('summary-result', `合约数: ${data.total_contracts}`);
+                log('summary-result', `数据目录: ${data.data_dir}`);
+                log('summary-result', `完整响应:\n${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                log('summary-result', `✗ 失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testContracts() {
+            clearLog('contracts-result');
+            log('contracts-result', '正在获取合约列表...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/csv/contracts?underlying=BTC`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const data = await response.json();
+                const contracts = data.contracts || [];
+                log('contracts-result', `✓ 成功`, 'success');
+                log('contracts-result', `合约数: ${contracts.length}`);
+                if (contracts.length > 0) {
+                    log('contracts-result', `第一个合约: ${contracts[0].instrument_name}`);
+                    log('contracts-result', `执行价: ${contracts[0].strike_price}`);
+                    log('contracts-result', `期权类型: ${contracts[0].option_type}`);
+                    log('contracts-result', `\n前 5 个合约:`);
+                    contracts.slice(0, 5).forEach(c => {
+                        log('contracts-result', `  - ${c.instrument_name} (${c.option_type}, $${c.strike_price})`);
+                    });
+                }
+                log('contracts-result', `\n完整响应:\n${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                log('contracts-result', `✗ 失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function testContractData() {
+            const contractName = document.getElementById('contract-name').value;
+            if (!contractName) {
+                alert('请输入合约名称');
+                return;
+            }
+            
+            clearLog('contract-result');
+            log('contract-result', `正在获取合约数据: ${contractName}...`);
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/csv/contract/${contractName}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const data = await response.json();
+                log('contract-result', `✓ 成功`, 'success');
+                log('contract-result', `数据点数: ${data.data_points}`);
+                log('contract-result', `平均价格: ${data.avg_price}`);
+                log('contract-result', `时间范围: ${data.date_range.start} 到 ${data.date_range.end}`);
+                log('contract-result', `\n完整响应:\n${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                log('contract-result', `✗ 失败: ${error.message}`, 'error');
+            }
+        }
+
+        async function checkApiStatus() {
+            clearLog('status-result');
+            log('status-result', '检查 API 状态...');
+            
+            try {
+                // 检查 API 是否可访问
+                const response = await fetch(`${API_BASE}/api/csv/summary`);
+                if (response.ok) {
+                    log('status-result', `✓ API 正常运行`, 'success');
+                    const data = await response.json();
+                    log('status-result', `✓ 找到 ${data.total_contracts} 个合约`);
+                    log('status-result', `✓ 数据目录: ${data.data_dir}`);
+                } else {
+                    log('status-result', `✗ API 返回错误: ${response.status}`, 'error');
+                }
+            } catch (error) {
+                log('status-result', `✗ 无法连接到 API: ${error.message}`, 'error');
+                log('status-result', `请确保后端 API 正在运行: http://localhost:8000`);
+            }
+        }
+
+        // 页面加载时自动检查 API 状态
+        window.addEventListener('load', () => {
+            checkApiStatus();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV API 直接测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 20px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 10px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .info {
+            color: #17a2b8;
+            font-weight: bold;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.ok {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CSV API 直接测试工具</h1>
+        <p>这个工具可以直接测试后端 CSV API 是否工作正常。</p>
+    </div>
+
+    <div class="container">
+        <h2>1. 测试 CSV 摘要 API</h2>
+        <button onclick="testSummary()">获取 CSV 数据摘要</button>
+        <div id="summary-result" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="container">
+        <h2>2. 测试 CSV 合约列表 API</h2>
+        <button onclick="testContracts()">获取 CSV 合约列表</button>
+        <div id="contracts-result" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="container">
+        <h2>3. 测试历史数据 API</h2>
+        <button onclick="testHistoricalInstruments()">获取历史数据合约列表</button>
+        <div id="historical-result" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="container">
+        <h2>4. 对比测试</h2>
+        <button onclick="compareAPIs()">对比 CSV API 和历史数据 API</button>
+        <div id="compare-result" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="container">
+        <h2>5. 前端组件测试</h2>
+        <button onclick="testFrontendLogic()">测试前端回退逻辑</button>
+        <div id="frontend-result" class="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        function showResult(elementId, content, isError = false) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = content;
+            element.style.display = 'block';
+            if (isError) {
+                element.className = 'result error';
+            } else {
+                element.className = 'result';
+            }
+        }
+
+        async function testSummary() {
+            const resultId = 'summary-result';
+            try {
+                showResult(resultId, '<span class="info">正在加载...</span>');
+                const response = await fetch(`${API_BASE}/api/csv/summary`);
+                const data = await response.json();
+                
+                let output = '<span class="success">✓ 成功</span>\n\n';
+                output += `文件数: ${data.total_files}\n`;
+                output += `记录数: ${data.total_records}\n`;
+                output += `合约数: ${data.total_contracts}\n`;
+                output += `数据目录: ${data.data_dir}\n`;
+                output += `最后更新: ${data.last_updated}\n`;
+                
+                showResult(resultId, output);
+            } catch (error) {
+                showResult(resultId, `<span class="error">✗ 错误</span>\n${error.message}`, true);
+            }
+        }
+
+        async function testContracts() {
+            const resultId = 'contracts-result';
+            try {
+                showResult(resultId, '<span class="info">正在加载...</span>');
+                const response = await fetch(`${API_BASE}/api/csv/contracts?underlying=BTC`);
+                const data = await response.json();
+                
+                let output = '<span class="success">✓ 成功</span>\n\n';
+                output += `标的资产: ${data.underlying}\n`;
+                output += `合约数: ${data.contracts.length}\n`;
+                output += `数据目录: ${data.data_dir}\n\n`;
+                
+                if (data.contracts.length > 0) {
+                    output += '前 5 个合约:\n';
+                    data.contracts.slice(0, 5).forEach((contract, index) => {
+                        output += `${index + 1}. ${contract.instrument_name} (执行价: $${contract.strike_price})\n`;
+                    });
+                }
+                
+                showResult(resultId, output);
+            } catch (error) {
+                showResult(resultId, `<span class="error">✗ 错误</span>\n${error.message}`, true);
+            }
+        }
+
+        async function testHistoricalInstruments() {
+            const resultId = 'historical-result';
+            try {
+                showResult(resultId, '<span class="info">正在加载...</span>');
+                const response = await fetch(`${API_BASE}/api/historical/instruments?underlying=BTC`);
+                const data = await response.json();
+                
+                let output = '<span class="success">✓ 成功</span>\n\n';
+                output += `合约数: ${data.length}\n`;
+                
+                if (data.length > 0) {
+                    output += '\n前 5 个合约:\n';
+                    data.slice(0, 5).forEach((contract, index) => {
+                        output += `${index + 1}. ${contract}\n`;
+                    });
+                } else {
+                    output += '\n<span class="error">⚠ 数据库中没有合约</span>\n';
+                }
+                
+                showResult(resultId, output);
+            } catch (error) {
+                showResult(resultId, `<span class="error">✗ 错误</span>\n${error.message}`, true);
+            }
+        }
+
+        async function compareAPIs() {
+            const resultId = 'compare-result';
+            try {
+                showResult(resultId, '<span class="info">正在加载...</span>');
+                
+                // 获取 CSV API 数据
+                const csvResponse = await fetch(`${API_BASE}/api/csv/contracts?underlying=BTC`);
+                const csvData = await csvResponse.json();
+                
+                // 获取历史数据 API 数据
+                const historicalResponse = await fetch(`${API_BASE}/api/historical/instruments?underlying=BTC`);
+                const historicalData = await historicalResponse.json();
+                
+                let output = '<span class="success">✓ 对比完成</span>\n\n';
+                output += '=== CSV API ===\n';
+                output += `合约数: ${csvData.contracts.length}\n`;
+                output += `数据目录: ${csvData.data_dir}\n\n`;
+                
+                output += '=== 历史数据 API ===\n';
+                output += `合约数: ${historicalData.length}\n\n`;
+                
+                output += '=== 分析 ===\n';
+                if (csvData.contracts.length > 0 && historicalData.length === 0) {
+                    output += '<span class="error">⚠ 数据库为空，应该使用 CSV 数据</span>\n';
+                    output += '前端应该自动回退到 CSV API\n';
+                } else if (csvData.contracts.length > 0 && historicalData.length > 0) {
+                    output += '✓ 两个数据源都有数据\n';
+                    output += '前端应该优先使用数据库数据\n';
+                } else if (csvData.contracts.length === 0) {
+                    output += '<span class="error">✗ CSV 数据为空</span>\n';
+                }
+                
+                showResult(resultId, output);
+            } catch (error) {
+                showResult(resultId, `<span class="error">✗ 错误</span>\n${error.message}`, true);
+            }
+        }
+
+        async function testFrontendLogic() {
+            const resultId = 'frontend-result';
+            try {
+                showResult(resultId, '<span class="info">正在测试前端回退逻辑...</span>');
+                
+                // 模拟前端逻辑
+                let output = '<span class="success">✓ 前端回退逻辑测试</span>\n\n';
+                
+                // 1. 尝试从数据库获取
+                output += '步骤 1: 尝试从数据库获取合约列表\n';
+                const historicalResponse = await fetch(`${API_BASE}/api/historical/instruments?underlying=BTC`);
+                const historicalData = await historicalResponse.json();
+                output += `  结果: ${historicalData.length} 个合约\n\n`;
+                
+                let instrumentList = Array.isArray(historicalData) ? historicalData : [];
+                
+                // 2. 如果数据库为空，尝试从 CSV 获取
+                if (instrumentList.length === 0) {
+                    output += '步骤 2: 数据库为空，尝试从 CSV API 获取\n';
+                    const csvResponse = await fetch(`${API_BASE}/api/csv/contracts?underlying=BTC`);
+                    const csvData = await csvResponse.json();
+                    const csvInstrumentList = csvData.contracts.map(c => c.instrument_name);
+                    output += `  结果: ${csvInstrumentList.length} 个合约\n\n`;
+                    
+                    if (csvInstrumentList.length > 0) {
+                        output += '<span class="success">✓ 回退成功！前端应该显示 CSV 数据</span>\n';
+                        output += `前 5 个合约:\n`;
+                        csvInstrumentList.slice(0, 5).forEach((contract, index) => {
+                            output += `  ${index + 1}. ${contract}\n`;
+                        });
+                    } else {
+                        output += '<span class="error">✗ CSV 数据也为空</span>\n';
+                    }
+                } else {
+                    output += '步骤 2: 数据库有数据，使用数据库数据\n';
+                    output += `前 5 个合约:\n`;
+                    instrumentList.slice(0, 5).forEach((contract, index) => {
+                        output += `  ${index + 1}. ${contract}\n`;
+                    });
+                }
+                
+                showResult(resultId, output);
+            } catch (error) {
+                showResult(resultId, `<span class="error">✗ 错误</span>\n${error.message}`, true);
+            }
+        }
+
+        // 页面加载时自动运行所有测试
+        window.addEventListener('load', () => {
+            console.log('页面已加载，可以开始测试');
+        });
+    </script>
+</body>
+</html>

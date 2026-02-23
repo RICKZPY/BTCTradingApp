@@ -357,7 +357,7 @@ const OptionsChainTab = () => {
           <div>
             <span className="text-text-secondary">当前价格:</span>
             <span className="text-2xl font-bold text-text-primary ml-3 font-mono">
-              ${underlyingPrice.toLocaleString()}
+              ${(underlyingPrice || 0).toLocaleString()}
             </span>
           </div>
           <div className="flex items-center space-x-4">

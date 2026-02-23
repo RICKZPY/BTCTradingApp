@@ -76,42 +76,35 @@ const Step2_ParameterConfig = ({
     try {
       setIsLoadingOptions(true)
       setOptionsLoadError(null)
-      const rawData = await dataApi.getOptionsChain('BTC')
       
-      const strikeMap = new Map<number, { call?: any; put?: any }>()
-      const targetDate = new Date(expiryDate).toISOString().split('T')[0]
+      // 优先使用ATM端点（轻量级）
+      const atmData = await dataApi.getATMOptions('BTC', expiryDate, 5)
       
-      rawData.forEach((option: any) => {
-        const optionDate = new Date(option.expiration_timestamp * 1000)
-          .toISOString().split('T')[0]
-        
-        if (optionDate !== targetDate) return
-        
-        const strike = option.strike
-        if (!strike) return
-        
-        if (!strikeMap.has(strike)) {
-          strikeMap.set(strike, {})
-        }
-        
-        const strikeData = strikeMap.get(strike)!
-        if (option.option_type === 'call') {
-          strikeData.call = option
-        } else if (option.option_type === 'put') {
-          strikeData.put = option
-        }
-      })
+      // 转换ATM数据格式
+      const processedData = []
       
-      const processedData = Array.from(strikeMap.entries())
-        .filter(([_, data]) => data.call && data.put)
-        .map(([strike, data]) => ({
-          strike,
-          callPrice: data.call?.mark_price || 0,
-          putPrice: data.put?.mark_price || 0,
-          callIV: data.call?.implied_volatility || 0,
-          putIV: data.put?.implied_volatility || 0
-        }))
-        .sort((a, b) => a.strike - b.strike)
+      // 处理call期权
+      if (atmData.call_options && atmData.call_options.length > 0) {
+        atmData.call_options.forEach((call: any) => {
+          const strike = call.strike
+          
+          // 查找对应的put期权
+          const put = atmData.put_options?.find((p: any) => p.strike === strike)
+          
+          processedData.push({
+            strike,
+            callPrice: Math.max(0, call.mark_price || call.last_price || 0),
+            putPrice: Math.max(0, put?.mark_price || put?.last_price || 0),
+            callIV: call.implied_volatility || 0,
+            putIV: put?.implied_volatility || 0,
+            callData: call,
+            putData: put
+          })
+        })
+      }
+      
+      // 按执行价排序
+      processedData.sort((a, b) => a.strike - b.strike)
       
       setOptionsData(processedData)
       

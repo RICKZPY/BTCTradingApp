@@ -5,7 +5,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.connectors.deribit_connector import DeribitConnector
 from src.connectors.market_data_cache import get_cache
@@ -108,7 +108,15 @@ async def get_options_chain(
     Returns:
         期权链数据列表
     """
+    connector = None
     try:
+        # 尝试从缓存获取
+        cache = get_cache(ttl_seconds=300)
+        cache_key = f"options_chain_{currency}"
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return cached_data
+        
         connector = DeribitConnector()
         options_data = await connector.get_options_chain(currency)
         
@@ -133,10 +141,16 @@ async def get_options_chain(
                 open_interest=option.open_interest
             ))
         
+        # 存入缓存
+        cache.set(cache_key, result)
+        
         return result
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if connector:
+            await connector.close()
 
 
 @router.get("/options-chain-enhanced", response_model=EnhancedOptionsChainResponse)
@@ -176,10 +190,12 @@ async def get_options_chain_enhanced(
         expiry_map = {}
         for option in options_data:
             expiry_timestamp = option.expiration_date.timestamp() if hasattr(option.expiration_date, 'timestamp') else 0
-            expiry_date_str = option.expiration_date.strftime("%Y-%m-%d") if hasattr(option.expiration_date, 'strftime') else ""
+            # 使用.date().isoformat()确保一致的日期格式
+            expiry_date_str = option.expiration_date.date().isoformat() if hasattr(option.expiration_date, 'date') else ""
             
-            # 计算到期天数
-            days_to_expiry = (option.expiration_date - datetime.now()).days if hasattr(option.expiration_date, '__sub__') else 0
+            # 计算到期天数 - 使用UTC时间
+            now_utc = datetime.now(timezone.utc)
+            days_to_expiry = (option.expiration_date.date() - now_utc.date()).days if hasattr(option.expiration_date, 'date') else 0
             
             if expiry_date_str not in expiry_map:
                 expiry_map[expiry_date_str] = {
@@ -247,21 +263,21 @@ async def calculate_greeks(request: GreeksCalculationRequest):
         # 计算期权价格
         option_type = OptionType.CALL if request.option_type.lower() == "call" else OptionType.PUT
         price = engine.black_scholes_price(
-            spot_price=request.spot_price,
-            strike_price=request.strike_price,
-            time_to_expiry=request.time_to_expiry,
-            volatility=request.volatility,
-            risk_free_rate=request.risk_free_rate,
+            S=request.spot_price,
+            K=request.strike_price,
+            T=request.time_to_expiry,
+            sigma=request.volatility,
+            r=request.risk_free_rate,
             option_type=option_type
         )
         
         # 计算希腊字母
         greeks = engine.calculate_greeks(
-            spot_price=request.spot_price,
-            strike_price=request.strike_price,
-            time_to_expiry=request.time_to_expiry,
-            volatility=request.volatility,
-            risk_free_rate=request.risk_free_rate,
+            S=request.spot_price,
+            K=request.strike_price,
+            T=request.time_to_expiry,
+            sigma=request.volatility,
+            r=request.risk_free_rate,
             option_type=option_type
         )
         
@@ -289,6 +305,7 @@ async def get_underlying_price(symbol: str = "BTC"):
     Returns:
         当前价格信息
     """
+    connector = None
     try:
         connector = DeribitConnector()
         index_price = await connector.get_index_price(symbol)
@@ -301,6 +318,9 @@ async def get_underlying_price(symbol: str = "BTC"):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if connector:
+            await connector.close()
 
 
 @router.get("/volatility-surface/{currency}")
@@ -373,5 +393,21 @@ async def cleanup_cache():
     return {
         "message": f"Cleaned up {cleaned_count} expired entries",
         "cleaned_count": cleaned_count,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.get("/cache/stats")
+async def get_cache_stats():
+    """
+    获取缓存统计信息
+    
+    Returns:
+        缓存统计信息
+    """
+    cache = get_cache()
+    stats = cache.get_stats()
+    return {
+        "cache_stats": stats,
         "timestamp": datetime.now().isoformat()
     }

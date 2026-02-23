@@ -30,9 +30,11 @@ const BacktestTab = () => {
   const loadStrategies = async () => {
     try {
       const data = await strategiesApi.list()
-      setStrategies(data)
+      // 确保 data 是数组
+      setStrategies(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error('加载策略失败:', error)
+      setStrategies([]) // 出错时设置为空数组
     }
   }
 
@@ -41,13 +43,16 @@ const BacktestTab = () => {
     try {
       setIsLoading(true)
       const data = await backtestApi.listResults(undefined, 20)
-      setBacktestResults(data)
-      if (data.length > 0 && !selectedResult) {
-        setSelectedResult(data[0])
-        loadDailyPnL(data[0].id)
+      // 确保 data 是数组
+      const results = Array.isArray(data) ? data : []
+      setBacktestResults(results)
+      if (results.length > 0 && !selectedResult) {
+        setSelectedResult(results[0])
+        loadDailyPnL(results[0].id)
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : '加载回测结果失败')
+      setBacktestResults([]) // 出错时设置为空数组
     } finally {
       setIsLoading(false)
     }
@@ -163,7 +168,7 @@ const BacktestTab = () => {
                 disabled={isRunning}
               >
                 <option value="">请选择策略</option>
-                {strategies.map(strategy => (
+                {Array.isArray(strategies) && strategies.map(strategy => (
                   <option key={strategy.id} value={strategy.id}>
                     {strategy.name}
                   </option>
@@ -573,7 +578,7 @@ const BacktestTab = () => {
           </div>
         ) : (
           <div className="space-y-2">
-            {backtestResults.map((result) => (
+            {Array.isArray(backtestResults) && backtestResults.map((result) => (
               <div
                 key={result.id}
                 className={`p-4 rounded cursor-pointer transition-all ${

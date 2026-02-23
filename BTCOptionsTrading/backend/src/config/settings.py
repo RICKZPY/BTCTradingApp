@@ -213,12 +213,35 @@ class Settings(BaseSettings):
     app_version: str = Field(default="1.0.0", env="APP_VERSION")
     environment: str = Field(default="development", env="ENVIRONMENT")
     
+    # 数据模式配置
+    use_mock_data: bool = Field(default=True, env="USE_MOCK_DATA")
+    strict_data_mode: bool = Field(default=False, env="STRICT_DATA_MODE")
+    
     # 子配置
     database: DatabaseSettings = DatabaseSettings()
     deribit: DeribitSettings = DeribitSettings()
     trading: TradingSettings = TradingSettings()
     api: APISettings = APISettings()
     logging: LoggingSettings = LoggingSettings()
+    
+    @property
+    def is_production(self) -> bool:
+        """判断是否为生产环境"""
+        return self.environment.lower() == "production"
+    
+    @property
+    def should_use_mock_data(self) -> bool:
+        """判断是否应该使用模拟数据（生产环境永远不使用）"""
+        if self.is_production:
+            return False
+        return self.use_mock_data
+    
+    @property
+    def is_strict_mode(self) -> bool:
+        """判断是否为严格模式（生产环境自动启用）"""
+        if self.is_production:
+            return True
+        return self.strict_data_mode
     
     if PYDANTIC_V2:
         model_config = {

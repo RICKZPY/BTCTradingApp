@@ -66,9 +66,11 @@ const StrategiesTab = () => {
     try {
       setIsLoading(true)
       const data = await strategiesApi.list()
-      setStrategies(data)
+      // 确保 data 是数组
+      setStrategies(Array.isArray(data) ? data : [])
     } catch (error) {
       setError(error instanceof Error ? error.message : '加载策略失败')
+      setStrategies([]) // 出错时设置为空数组
     } finally {
       setIsLoading(false)
     }
@@ -78,9 +80,11 @@ const StrategiesTab = () => {
   const loadTemplates = async () => {
     try {
       const data = await strategiesApi.getTemplates()
-      setTemplates(data.templates)
+      // 确保 templates 是数组
+      setTemplates(Array.isArray(data.templates) ? data.templates : [])
     } catch (error) {
       console.error('加载模板失败:', error)
+      setTemplates([]) // 出错时设置为空数组
     }
   }
 
@@ -692,7 +696,7 @@ const StrategiesTab = () => {
       <div>
         <h3 className="text-lg font-semibold mb-4 text-text-primary">策略模板</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {templates.map((template) => (
+          {Array.isArray(templates) && templates.map((template) => (
             <div 
               key={template.type}
               className="card hover:bg-opacity-80 cursor-pointer transition-all group relative overflow-hidden"

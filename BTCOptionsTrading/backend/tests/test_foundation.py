@@ -127,10 +127,19 @@ class TestConfiguration:
     def test_database_settings(self):
         """测试数据库配置"""
         db_settings = settings.database
-        assert db_settings.postgres_host == "localhost"
-        assert db_settings.postgres_port == 5432
-        assert db_settings.postgres_db == "btc_options"
-        assert "postgresql://" in db_settings.postgres_url
+        # 检查数据库类型（可以是sqlite或postgresql）
+        assert db_settings.db_type in ["sqlite", "postgresql"]
+        
+        # 如果是PostgreSQL，检查相关设置
+        if db_settings.db_type == "postgresql":
+            assert db_settings.postgres_host == "localhost"
+            assert db_settings.postgres_port == 5432
+            assert db_settings.postgres_db == "btc_options"
+            assert "postgresql://" in db_settings.postgres_url
+        # 如果是SQLite，检查路径
+        else:
+            assert "sqlite:///" in db_settings.postgres_url
+            assert db_settings.sqlite_path is not None
     
     def test_deribit_settings(self):
         """测试Deribit配置"""

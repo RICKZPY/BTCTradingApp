@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { historicalApi, type ManagerStats, type CoverageStats, type QualityReport } from '../../api/historical'
+import { csvApi, type ContractInfo, type ContractPriceData } from '../../api/csv'
 import LoadingSpinner from '../LoadingSpinner'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts'
 
@@ -7,12 +8,55 @@ const HistoricalDataTab = () => {
   const [stats, setStats] = useState<ManagerStats | null>(null)
   const [instruments, setInstruments] = useState<string[]>([])
   const [selectedInstrument, setSelectedInstrument] = useState<string>('')
+  const [contractDetails, setContractDetails] = useState<any>(null)
   const [availableDates, setAvailableDates] = useState<string[]>([])
   const [coverageStats, setCoverageStats] = useState<CoverageStats | null>(null)
   const [qualityReport, setQualityReport] = useState<QualityReport | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [activeView, setActiveView] = useState<'overview' | 'instruments' | 'quality'>('overview')
+  const [activeView, setActiveView] = useState<'overview' | 'instruments' | 'quality' | 'csv'>('overview')
+  
+  // CSV数据相关状态
+  const [csvContracts, setCSVContracts] = useState<ContractInfo[]>([])
+  const [selectedCSVContract, setSelectedCSVContract] = useState<string>('')
+  const [csvContractData, setCSVContractData] = useState<ContractPriceData | null>(null)
+  const [isLoadingCSV, setIsLoadingCSV] = useState(false)
+  const [csvError, setCSVError] = useState<string | null>(null)
+
+  // 加载CSV合约列表
+  const loadCSVContracts = async () => {
+    try {
+      setIsLoadingCSV(true)
+      setCSVError(null)
+      const contracts = await csvApi.getContracts('BTC')
+      setCSVContracts(contracts)
+      if (contracts.length > 0 && !selectedCSVContract) {
+        setSelectedCSVContract(contracts[0].instrument_name)
+      }
+    } catch (err) {
+      setCSVError(err instanceof Error ? err.message : '加载CSV合约列表失败')
+      console.error('加载CSV合约列表失败:', err)
+    } finally {
+      setIsLoadingCSV(false)
+    }
+  }
+
+  // 加载CSV合约数据
+  const loadCSVContractData = async (instrumentName: string) => {
+    if (!instrumentName) return
+    
+    try {
+      setIsLoadingCSV(true)
+      setCSVError(null)
+      const data = await csvApi.getContractData(instrumentName)
+      setCSVContractData(data)
+    } catch (err) {
+      setCSVError(err instanceof Error ? err.message : '加载CSV合约数据失败')
+      console.error('加载CSV合约数据失败:', err)
+    } finally {
+      setIsLoadingCSV(false)
+    }
+  }
 
   // 加载统计数据
   const loadStats = async () => {
@@ -31,13 +75,46 @@ const HistoricalDataTab = () => {
   // 加载可用合约
   const loadInstruments = async () => {
     try {
-      const data = await historicalApi.getAvailableInstruments('BTC')
-      setInstruments(data)
-      if (data.length > 0 && !selectedInstrument) {
-        setSelectedInstrument(data[0])
+      console.log('开始加载合约列表...')
+      
+      // 首先尝试从数据库获取
+      let instrumentList: string[] = []
+      try {
+        const data = await historicalApi.getAvailableInstruments('BTC')
+        instrumentList = Array.isArray(data) ? (data as string[]) : []
+        console.log(`从数据库获取了 ${instrumentList.length} 个合约`)
+      } catch (dbErr) {
+        console.warn('从数据库获取合约失败:', dbErr)
+      }
+      
+      // 如果数据库中没有数据，尝试从 CSV API 获取
+      if (instrumentList.length === 0) {
+        console.info('数据库中没有合约，尝试从 CSV 数据获取...')
+        try {
+          const csvContracts = await csvApi.getContracts('BTC')
+          console.log(`从 CSV 获取了 ${csvContracts.length} 个合约`)
+          const csvInstrumentList = csvContracts.map(c => c.instrument_name)
+          setInstruments(csvInstrumentList)
+          if (csvInstrumentList.length > 0 && !selectedInstrument) {
+            setSelectedInstrument(csvInstrumentList[0])
+          }
+          console.log('✓ 成功从 CSV 加载合约')
+          return
+        } catch (csvErr) {
+          console.error('从 CSV 获取合约失败:', csvErr)
+          setError('无法加载合约数据')
+          return
+        }
+      }
+      
+      setInstruments(instrumentList)
+      if (instrumentList.length > 0 && !selectedInstrument) {
+        setSelectedInstrument(instrumentList[0])
       }
     } catch (err) {
       console.error('加载合约列表失败:', err)
+      setInstruments([]) // 出错时设置为空数组
+      setError(err instanceof Error ? err.message : '加载合约列表失败')
     }
   }
 
@@ -54,18 +131,82 @@ const HistoricalDataTab = () => {
   // 加载选中合约的日期
   const loadDatesForInstrument = async (instrumentName: string) => {
     try {
-      const dates = await historicalApi.getAvailableDates(instrumentName)
-      setAvailableDates(dates)
+      setIsLoading(true)
+      setError(null)
+      console.log(`开始加载合约详情: ${instrumentName}`)
       
-      // 如果有日期数据，加载覆盖率统计
-      if (dates.length >= 2) {
-        const startDate = dates[0]
-        const endDate = dates[dates.length - 1]
-        const coverage = await historicalApi.getCoverageStats(startDate, endDate)
-        setCoverageStats(coverage)
+      // 首先尝试从数据库获取
+      let details: any = null
+      try {
+        details = await historicalApi.getContractDetails(instrumentName)
+        console.log(`从数据库获取了合约详情`)
+      } catch (dbErr) {
+        console.warn('从数据库获取合约详情失败:', dbErr)
       }
+      
+      // 如果数据库中没有数据，尝试从 CSV 获取
+      if (!details) {
+        console.info('数据库中没有合约详情，尝试从 CSV 获取...')
+        try {
+          const csvData = await csvApi.getContractData(instrumentName)
+          console.log(`从 CSV 获取了合约详情`)
+          
+          // 转换 CSV 数据格式以匹配数据库格式
+          details = {
+            instrument_name: csvData.instrument_name,
+            underlying: csvData.underlying,
+            strike_price: csvData.strike_price,
+            option_type: csvData.option_type,
+            expiry_date: csvData.expiry_date,
+            data_points: csvData.data_points,
+            avg_price: csvData.avg_price,
+            price_history: csvData.price_history,
+            total_volume: csvData.price_history.reduce((sum: number, p: any) => sum + (p.volume || 0), 0)
+          }
+        } catch (csvErr) {
+          console.error('从 CSV 获取合约详情失败:', csvErr)
+          setError('无法加载合约详情')
+          setIsLoading(false)
+          return
+        }
+      }
+      
+      if (!details) {
+        setError('无法加载合约详情')
+        setIsLoading(false)
+        return
+      }
+      
+      setContractDetails(details)
+      
+      // 从价格历史中提取日期
+      if (details.price_history && details.price_history.length > 0) {
+        const dates = details.price_history.map((item: any) => item.timestamp.split('T')[0])
+        const uniqueDates = Array.from(new Set(dates)).sort() as string[]
+        setAvailableDates(uniqueDates)
+        
+        // 设置覆盖率统计
+        if (uniqueDates.length >= 1) {
+          const startDate = uniqueDates[0]
+          const endDate = uniqueDates[uniqueDates.length - 1]
+          setCoverageStats({
+            start_date: startDate,
+            end_date: endDate,
+            total_days: uniqueDates.length,
+            days_with_data: uniqueDates.length,
+            coverage_percentage: 1.0,
+            missing_dates_count: 0,
+            strikes_covered: [details.strike_price],
+            expiries_covered: [details.expiry_date]
+          })
+        }
+      }
+      console.log('✓ 成功加载合约详情')
     } catch (err) {
-      console.error('加载日期数据失败:', err)
+      console.error('加载合约详情失败:', err)
+      setError(err instanceof Error ? err.message : '加载合约详情失败')
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -73,6 +214,7 @@ const HistoricalDataTab = () => {
     loadStats()
     loadInstruments()
     loadQualityReport()
+    loadCSVContracts()
   }, [])
 
   useEffect(() => {
@@ -81,13 +223,21 @@ const HistoricalDataTab = () => {
     }
   }, [selectedInstrument])
 
+  useEffect(() => {
+    if (selectedCSVContract) {
+      loadCSVContractData(selectedCSVContract)
+    }
+  }, [selectedCSVContract])
+
   // 格式化数字
-  const formatNumber = (num: number) => {
+  const formatNumber = (num: number | undefined) => {
+    if (num === undefined || num === null) return '0'
     return num.toLocaleString('en-US')
   }
 
   // 格式化百分比
-  const formatPercent = (value: number) => {
+  const formatPercent = (value: number | undefined) => {
+    if (value === undefined || value === null) return '0.0%'
     return `${(value * 100).toFixed(1)}%`
   }
 
@@ -172,6 +322,16 @@ const HistoricalDataTab = () => {
           合约分析
         </button>
         <button
+          onClick={() => setActiveView('csv')}
+          className={`px-4 py-2 font-medium transition-colors ${
+            activeView === 'csv'
+              ? 'text-accent-blue border-b-2 border-accent-blue'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          CSV数据分析
+        </button>
+        <button
           onClick={() => setActiveView('quality')}
           className={`px-4 py-2 font-medium transition-colors ${
             activeView === 'quality'
@@ -241,7 +401,7 @@ const HistoricalDataTab = () => {
                 <div>
                   <p className="text-text-secondary text-sm">缓存大小</p>
                   <p className="text-3xl font-bold text-text-primary mt-2">
-                    {stats.memory_cache_size_mb.toFixed(1)} MB
+                    {(stats.memory_cache_size_mb || 0).toFixed(1)} MB
                   </p>
                 </div>
                 <div className="w-12 h-12 bg-accent-purple bg-opacity-20 rounded-lg flex items-center justify-center">
@@ -273,7 +433,7 @@ const HistoricalDataTab = () => {
                     qualityReport.quality_score >= 0.7 ? 'text-accent-yellow' :
                     'text-accent-red'
                   }`}>
-                    {(qualityReport.quality_score * 100).toFixed(0)}分
+                    {((qualityReport?.quality_score || 0) * 100).toFixed(0)}分
                   </p>
                 </div>
                 <div>
@@ -312,7 +472,7 @@ const HistoricalDataTab = () => {
               className="select w-full max-w-md"
             >
               <option value="">选择合约...</option>
-              {instruments.map((instrument) => (
+              {Array.isArray(instruments) && instruments.map((instrument) => (
                 <option key={instrument} value={instrument}>
                   {instrument}
                 </option>
@@ -322,6 +482,113 @@ const HistoricalDataTab = () => {
               共有 {instruments.length} 个可用合约
             </p>
           </div>
+
+          {/* 合约基本信息 */}
+          {selectedInstrument && contractDetails && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-4 text-text-primary">合约信息</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-text-secondary text-sm">合约名称</p>
+                  <p className="text-text-primary font-medium mt-1">{contractDetails.instrument_name}</p>
+                </div>
+                <div>
+                  <p className="text-text-secondary text-sm">标的资产</p>
+                  <p className="text-text-primary font-medium mt-1">{contractDetails.underlying}</p>
+                </div>
+                <div>
+                  <p className="text-text-secondary text-sm">执行价</p>
+                  <p className="text-text-primary font-medium mt-1">${contractDetails.strike_price.toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-text-secondary text-sm">期权类型</p>
+                  <p className="text-text-primary font-medium mt-1">
+                    {contractDetails.option_type === 'call' ? '看涨 (Call)' : '看跌 (Put)'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-text-secondary text-sm">到期日</p>
+                  <p className="text-text-primary font-medium mt-1">
+                    {new Date(contractDetails.expiry_date).toLocaleDateString('zh-CN')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-text-secondary text-sm">数据点数</p>
+                  <p className="text-accent-blue font-bold text-xl mt-1">{contractDetails.data_points}</p>
+                </div>
+                <div>
+                  <p className="text-text-secondary text-sm">平均价格</p>
+                  <p className="text-accent-green font-bold text-xl mt-1">
+                    {contractDetails.avg_price.toFixed(4)} BTC
+                  </p>
+                </div>
+                <div>
+                  <p className="text-text-secondary text-sm">总成交量</p>
+                  <p className="text-text-primary font-bold text-xl mt-1">
+                    {contractDetails.total_volume.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 价格历史图表 */}
+          {selectedInstrument && contractDetails && contractDetails.price_history && contractDetails.price_history.length > 0 && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-4 text-text-primary">价格历史</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={contractDetails.price_history}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#474D57" />
+                  <XAxis 
+                    dataKey="timestamp" 
+                    stroke="#848E9C"
+                    tickFormatter={(value) => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                  />
+                  <YAxis stroke="#848E9C" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1E2329',
+                      border: '1px solid #474D57',
+                      borderRadius: '8px'
+                    }}
+                    labelFormatter={(value) => new Date(value).toLocaleString('zh-CN')}
+                  />
+                  <Legend />
+                  <Line type="monotone" dataKey="mark_price" stroke="#F0B90B" name="标记价格" />
+                  <Line type="monotone" dataKey="bid_price" stroke="#0ECB81" name="买价" />
+                  <Line type="monotone" dataKey="ask_price" stroke="#F6465D" name="卖价" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* 希腊值和隐含波动率 */}
+          {selectedInstrument && contractDetails && contractDetails.price_history && contractDetails.price_history.length > 0 && (
+            <div className="card">
+              <h3 className="text-lg font-semibold mb-4 text-text-primary">隐含波动率</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={contractDetails.price_history}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#474D57" />
+                  <XAxis 
+                    dataKey="timestamp" 
+                    stroke="#848E9C"
+                    tickFormatter={(value) => new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                  />
+                  <YAxis stroke="#848E9C" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1E2329',
+                      border: '1px solid #474D57',
+                      borderRadius: '8px'
+                    }}
+                    labelFormatter={(value) => new Date(value).toLocaleString('zh-CN')}
+                  />
+                  <Legend />
+                  <Line type="monotone" dataKey="implied_volatility" stroke="#B7BDC6" name="隐含波动率 (%)" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           {/* 合约数据统计 */}
           {selectedInstrument && coverageStats && (
@@ -409,6 +676,234 @@ const HistoricalDataTab = () => {
         </div>
       )}
 
+      {/* CSV数据分析视图 */}
+      {activeView === 'csv' && (
+        <div className="space-y-6">
+          {csvError && (
+            <div className="p-4 bg-accent-red bg-opacity-10 border border-accent-red rounded-lg">
+              <p className="text-accent-red">{csvError}</p>
+            </div>
+          )}
+
+          {/* CSV合约选择器 */}
+          <div className="card">
+            <h3 className="text-lg font-semibold mb-4 text-text-primary">选择CSV合约</h3>
+            {isLoadingCSV && csvContracts.length === 0 ? (
+              <div className="flex items-center justify-center py-8">
+                <LoadingSpinner />
+              </div>
+            ) : (
+              <>
+                <select
+                  value={selectedCSVContract}
+                  onChange={(e) => setSelectedCSVContract(e.target.value)}
+                  className="select w-full max-w-md"
+                >
+                  <option value="">选择合约...</option>
+                  {csvContracts.map((contract) => (
+                    <option key={contract.instrument_name} value={contract.instrument_name}>
+                      {contract.instrument_name} (执行价: ${contract.strike_price.toLocaleString()})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-sm text-text-secondary mt-2">
+                  共有 {csvContracts.length} 个可用合约
+                </p>
+              </>
+            )}
+          </div>
+
+          {/* CSV合约信息 */}
+          {selectedCSVContract && csvContractData && (
+            <>
+              <div className="card">
+                <h3 className="text-lg font-semibold mb-4 text-text-primary">合约信息</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-text-secondary text-sm">合约名称</p>
+                    <p className="text-text-primary font-medium mt-1">{csvContractData.instrument_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary text-sm">标的资产</p>
+                    <p className="text-text-primary font-medium mt-1">{csvContractData.underlying}</p>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary text-sm">执行价</p>
+                    <p className="text-text-primary font-medium mt-1">${csvContractData.strike_price.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary text-sm">期权类型</p>
+                    <p className="text-text-primary font-medium mt-1">
+                      {csvContractData.option_type === 'call' ? '看涨 (Call)' : '看跌 (Put)'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary text-sm">到期日</p>
+                    <p className="text-text-primary font-medium mt-1">
+                      {new Date(csvContractData.expiry_date).toLocaleDateString('zh-CN')}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary text-sm">数据点数</p>
+                    <p className="text-accent-blue font-bold text-xl mt-1">{csvContractData.data_points}</p>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary text-sm">平均价格</p>
+                    <p className="text-accent-green font-bold text-xl mt-1">
+                      {csvContractData.avg_price.toFixed(4)} BTC
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-text-secondary text-sm">数据时间范围</p>
+                    <p className="text-text-primary font-medium text-sm mt-1">
+                      {formatDate(csvContractData.date_range.start)} ~ {formatDate(csvContractData.date_range.end)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 价格曲线图 */}
+              {csvContractData.price_history && csvContractData.price_history.length > 0 && (
+                <div className="card">
+                  <h3 className="text-lg font-semibold mb-4 text-text-primary">价格曲线</h3>
+                  <ResponsiveContainer width="100%" height={400}>
+                    <LineChart data={csvContractData.price_history}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#474D57" />
+                      <XAxis 
+                        dataKey="timestamp" 
+                        stroke="#848E9C"
+                        tickFormatter={(value) => {
+                          try {
+                            return new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+                          } catch {
+                            return value
+                          }
+                        }}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis stroke="#848E9C" />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1E2329',
+                          border: '1px solid #474D57',
+                          borderRadius: '8px'
+                        }}
+                        labelFormatter={(value) => {
+                          try {
+                            return new Date(value).toLocaleString('zh-CN')
+                          } catch {
+                            return value
+                          }
+                        }}
+                        formatter={(value: any) => value ? value.toFixed(4) : 'N/A'}
+                      />
+                      <Legend />
+                      {csvContractData.price_history.some(p => p.mark_price) && (
+                        <Line type="monotone" dataKey="mark_price" stroke="#F0B90B" name="标记价格" dot={false} />
+                      )}
+                      {csvContractData.price_history.some(p => p.bid_price) && (
+                        <Line type="monotone" dataKey="bid_price" stroke="#0ECB81" name="买价" dot={false} />
+                      )}
+                      {csvContractData.price_history.some(p => p.ask_price) && (
+                        <Line type="monotone" dataKey="ask_price" stroke="#F6465D" name="卖价" dot={false} />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* 隐含波动率曲线 */}
+              {csvContractData.price_history && csvContractData.price_history.some(p => p.implied_volatility) && (
+                <div className="card">
+                  <h3 className="text-lg font-semibold mb-4 text-text-primary">隐含波动率</h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={csvContractData.price_history}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#474D57" />
+                      <XAxis 
+                        dataKey="timestamp" 
+                        stroke="#848E9C"
+                        tickFormatter={(value) => {
+                          try {
+                            return new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+                          } catch {
+                            return value
+                          }
+                        }}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis stroke="#848E9C" />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1E2329',
+                          border: '1px solid #474D57',
+                          borderRadius: '8px'
+                        }}
+                        labelFormatter={(value) => {
+                          try {
+                            return new Date(value).toLocaleString('zh-CN')
+                          } catch {
+                            return value
+                          }
+                        }}
+                        formatter={(value: any) => value ? `${(value * 100).toFixed(2)}%` : 'N/A'}
+                      />
+                      <Legend />
+                      <Line type="monotone" dataKey="implied_volatility" stroke="#B7BDC6" name="隐含波动率" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* 成交量曲线 */}
+              {csvContractData.price_history && csvContractData.price_history.some(p => p.volume) && (
+                <div className="card">
+                  <h3 className="text-lg font-semibold mb-4 text-text-primary">成交量</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={csvContractData.price_history}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#474D57" />
+                      <XAxis 
+                        dataKey="timestamp" 
+                        stroke="#848E9C"
+                        tickFormatter={(value) => {
+                          try {
+                            return new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+                          } catch {
+                            return value
+                          }
+                        }}
+                        angle={-45}
+                        textAnchor="end"
+                        height={80}
+                      />
+                      <YAxis stroke="#848E9C" />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1E2329',
+                          border: '1px solid #474D57',
+                          borderRadius: '8px'
+                        }}
+                        labelFormatter={(value) => {
+                          try {
+                            return new Date(value).toLocaleString('zh-CN')
+                          } catch {
+                            return value
+                          }
+                        }}
+                      />
+                      <Bar dataKey="volume" fill="#3861FB" name="成交量" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {/* 数据质量视图 */}
       {activeView === 'quality' && qualityReport && (
         <div className="space-y-6">
@@ -422,7 +917,7 @@ const HistoricalDataTab = () => {
                   qualityReport.quality_score >= 0.7 ? 'text-accent-yellow' :
                   'text-accent-red'
                 }`}>
-                  {(qualityReport.quality_score * 100).toFixed(0)}
+                  {((qualityReport?.quality_score || 0) * 100).toFixed(0)}
                 </p>
                 <p className="text-text-secondary mb-1">/ 100</p>
               </div>
@@ -442,7 +937,7 @@ const HistoricalDataTab = () => {
               <h4 className="text-sm text-text-secondary mb-2">数据覆盖率</h4>
               <div className="flex items-end gap-2">
                 <p className="text-4xl font-bold text-accent-blue">
-                  {(qualityReport.coverage_percentage * 100).toFixed(1)}
+                  {((qualityReport?.coverage_percentage || 0) * 100).toFixed(1)}
                 </p>
                 <p className="text-text-secondary mb-1">%</p>
               </div>

@@ -26,7 +26,7 @@ class BacktestEngine(IBacktestEngine):
     def __init__(
         self,
         options_engine: Optional[OptionsEngine] = None,
-        use_historical_data: bool = False,
+        use_historical_data: bool = None,
         historical_data_manager=None
     ):
         """
@@ -34,18 +34,42 @@ class BacktestEngine(IBacktestEngine):
         
         Args:
             options_engine: 期权定价引擎（可选，默认创建新实例）
-            use_historical_data: 是否使用历史数据（默认False使用模拟数据）
+            use_historical_data: 是否使用历史数据（None表示根据配置决定）
             historical_data_manager: 历史数据管理器实例（当use_historical_data=True时需要）
         """
+        from src.config.settings import Settings
+        settings = Settings()
+        
         self.options_engine = options_engine or OptionsEngine()
+        
+        # 根据环境配置决定是否使用历史数据
+        if use_historical_data is None:
+            # 生产环境或非模拟数据模式下使用历史数据
+            use_historical_data = settings.is_production or not settings.should_use_mock_data
+        
         self.use_historical_data = use_historical_data
+        self.strict_mode = settings.is_strict_mode
         self.historical_data_manager = historical_data_manager
         self.historical_dataset = None
         
-        if use_historical_data and not historical_data_manager:
-            logger.warning("use_historical_data=True but no historical_data_manager provided")
+        # 严格模式下的验证
+        if self.use_historical_data:
+            if not historical_data_manager:
+                if self.strict_mode:
+                    raise ValueError(
+                        "Strict mode requires historical_data_manager when use_historical_data=True. "
+                        "Please provide a HistoricalDataManager instance or disable strict mode."
+                    )
+                else:
+                    logger.warning(
+                        "use_historical_data=True but no historical_data_manager provided. "
+                        "Will fall back to simulated data."
+                    )
         
-        logger.info(f"Backtest engine initialized (use_historical_data={use_historical_data})")
+        logger.info(
+            f"Backtest engine initialized "
+            f"(use_historical_data={use_historical_data}, strict_mode={self.strict_mode})"
+        )
     
     async def run_backtest(
         self,

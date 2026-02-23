@@ -40,6 +40,8 @@ const SettingsTab = () => {
       setHasDeribitCredentials(deribitData.has_credentials);
       setDeribitConfig(prev => ({
         ...prev,
+        api_key: deribitData.api_key || prev.api_key || '',
+        api_secret: deribitData.api_secret || prev.api_secret || '',
         test_mode: deribitData.test_mode,
       }));
       
@@ -171,7 +173,7 @@ const SettingsTab = () => {
                 type="text" 
                 className="input w-full" 
                 placeholder="输入API Key"
-                value={deribitConfig.api_key}
+                value={deribitConfig.api_key || ''}
                 onChange={(e) => setDeribitConfig({ ...deribitConfig, api_key: e.target.value })}
               />
             </div>
@@ -184,7 +186,7 @@ const SettingsTab = () => {
                 type="password" 
                 className="input w-full" 
                 placeholder="输入API Secret"
-                value={deribitConfig.api_secret}
+                value={deribitConfig.api_secret || ''}
                 onChange={(e) => setDeribitConfig({ ...deribitConfig, api_secret: e.target.value })}
               />
             </div>
@@ -296,7 +298,7 @@ const SettingsTab = () => {
               <div>
                 <p className="text-text-secondary text-sm">数据库</p>
                 <p className={`font-medium ${systemInfo.database_status === 'connected' ? 'text-accent-green' : 'text-accent-red'}`}>
-                  ● {systemInfo.database_type.toUpperCase()} 
+                  ● {(systemInfo.database_type || 'unknown').toUpperCase()} 
                   <span className="text-xs ml-1">
                     ({systemInfo.database_status === 'connected' ? '已连接' : '未连接'})
                   </span>

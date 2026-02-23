@@ -5,7 +5,7 @@ Deribit API连接器实现
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Dict, Optional
 from collections import deque
@@ -288,9 +288,9 @@ class DeribitConnector(IDeribitConnector):
         # 解析期权类型
         option_type = OptionType.CALL if data.get("option_type") == "call" else OptionType.PUT
         
-        # 解析到期日期
+        # 解析到期日期 - 使用UTC时区
         expiration_timestamp = data.get("expiration_timestamp", 0) / 1000
-        expiration_date = datetime.fromtimestamp(expiration_timestamp)
+        expiration_date = datetime.fromtimestamp(expiration_timestamp, tz=timezone.utc)
         
         # 获取 Greeks 数据
         greeks = data.get("greeks", {})
@@ -362,7 +362,7 @@ class DeribitConnector(IDeribitConnector):
                 
                 for i, tick in enumerate(ticks):
                     data = HistoricalData(
-                        timestamp=datetime.fromtimestamp(tick / 1000),
+                        timestamp=datetime.fromtimestamp(tick / 1000, tz=timezone.utc),
                         open_price=Decimal(str(opens[i])) if i < len(opens) else Decimal(0),
                         high_price=Decimal(str(highs[i])) if i < len(highs) else Decimal(0),
                         low_price=Decimal(str(lows[i])) if i < len(lows) else Decimal(0),

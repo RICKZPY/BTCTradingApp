@@ -14,7 +14,7 @@ from src.config.logging_config import get_logger
 logger = get_logger(__name__)
 
 # 创建路由器
-router = APIRouter(prefix="/api/historical-data", tags=["historical-data"])
+router = APIRouter(prefix="/api/historical", tags=["historical-data"])
 
 # 初始化管理器（单例）
 _manager: Optional[HistoricalDataManager] = None
@@ -449,3 +449,96 @@ async def export_data(request: ExportRequest):
     except Exception as e:
         logger.error(f"API: Export failed - {str(e)}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+# ============================================================================
+# 兼容性端点（为前端简化API提供兼容）
+# ============================================================================
+
+@router.get("/overview")
+async def get_overview():
+    """
+    获取数据概览（兼容简化API）
+    """
+    try:
+        manager = get_manager()
+        stats = manager.get_stats()
+        
+        return {
+            'csv_files': stats['csv_files'],
+            'database_records': stats['cache']['database']['record_count'],
+            'memory_cache_size_mb': stats['cache']['memory_cache']['size_mb'],
+            'unique_instruments': stats['cache']['memory_cache']['entries']
+        }
+    except Exception as e:
+        logger.error(f"API: Failed to get overview - {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/contracts")
+async def get_contracts(underlying_symbol: str = "BTC"):
+    """
+    获取合约列表（兼容简化API）
+    """
+    try:
+        manager = get_manager()
+        instruments = manager.get_available_instruments(
+            underlying_symbol=underlying_symbol
+        )
+        return instruments
+    except Exception as e:
+        logger.error(f"API: Failed to get contracts - {str(e)}")
+        # 如果没有数据，返回空列表而不是错误
+        return []
+
+
+@router.get("/contract/{instrument_name}")
+async def get_contract_details(instrument_name: str):
+    """
+    获取合约详情（兼容简化API）
+    """
+    try:
+        manager = get_manager()
+        
+        # 查询合约数据
+        data = manager.cache.query_option_data(
+            instrument_name=instrument_name,
+            limit=100
+        )
+        
+        if not data:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        
+        # 计算统计信息
+        prices = [row['mark_price'] for row in data if row.get('mark_price')]
+        volumes = [row['volume'] for row in data if row.get('volume')]
+        
+        first_row = data[0]
+        
+        return {
+            'instrument_name': instrument_name,
+            'underlying': first_row.get('underlying_symbol', 'BTC'),
+            'strike_price': first_row.get('strike_price', 0),
+            'expiry_date': first_row.get('expiry_date', ''),
+            'option_type': first_row.get('option_type', ''),
+            'data_points': len(data),
+            'avg_price': sum(prices) / len(prices) if prices else 0,
+            'total_volume': sum(volumes) if volumes else 0,
+            'price_history': [
+                {
+                    'timestamp': row.get('timestamp', ''),
+                    'mark_price': row.get('mark_price', 0),
+                    'bid_price': row.get('bid_price', 0),
+                    'ask_price': row.get('ask_price', 0),
+                    'volume': row.get('volume', 0),
+                    'open_interest': row.get('open_interest', 0),
+                    'implied_volatility': row.get('implied_volatility', 0)
+                }
+                for row in data[:100]  # 限制返回数量
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"API: Failed to get contract details - {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

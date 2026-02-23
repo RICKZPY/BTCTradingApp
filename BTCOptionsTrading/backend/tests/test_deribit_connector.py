@@ -112,16 +112,16 @@ class TestDeribitConnector:
         }
         mock_response.raise_for_status = MagicMock()
         
-        with patch.object(connector.client, 'post', return_value=mock_response) as mock_post:
-            # 将mock_post设置为异步函数
-            async def async_post(*args, **kwargs):
+        with patch.object(connector.client, 'get', return_value=mock_response) as mock_get:
+            # 将mock_get设置为异步函数
+            async def async_get(*args, **kwargs):
                 return mock_response
-            mock_post.side_effect = async_post
+            mock_get.side_effect = async_get
             
             result = await connector._request("test_method", {"param": "value"})
             
             assert result == {"test": "data"}
-            assert mock_post.called
+            assert mock_get.called
     
     @pytest.mark.asyncio
     async def test_request_handles_api_error(self, connector):
@@ -134,10 +134,10 @@ class TestDeribitConnector:
         }
         mock_response.raise_for_status = MagicMock()
         
-        with patch.object(connector.client, 'post', return_value=mock_response) as mock_post:
-            async def async_post(*args, **kwargs):
+        with patch.object(connector.client, 'get', return_value=mock_response) as mock_get:
+            async def async_get(*args, **kwargs):
                 return mock_response
-            mock_post.side_effect = async_post
+            mock_get.side_effect = async_get
             
             with pytest.raises(APIConnectionError, match="Test error"):
                 await connector._request("test_method")
@@ -151,21 +151,30 @@ class TestDeribitConnector:
                 "base_currency": "BTC",
                 "option_type": "call",
                 "strike": 50000,
-                "expiration_timestamp": 1735084800000,
-                "mark_price": 2500,
-                "best_bid_price": 2450,
-                "best_ask_price": 2550,
-                "last_price": 2500,
-                "mark_iv": 80,
-                "greeks": {"delta": 0.6, "gamma": 0.001, "theta": -10.5, "vega": 25.0, "rho": 15.0},
-                "open_interest": 100,
-                "stats": {"volume": 50}
+                "expiration_timestamp": 1735084800000
             }
         ]
         
-        # 创建异步mock函数
-        async def mock_request(*args, **kwargs):
-            return mock_instruments
+        mock_ticker = {
+            "mark_price": 2500,
+            "best_bid_price": 2450,
+            "best_ask_price": 2550,
+            "last_price": 2500,
+            "mark_iv": 80,
+            "greeks": {"delta": 0.6, "gamma": 0.001, "theta": -10.5, "vega": 25.0, "rho": 15.0},
+            "open_interest": 100,
+            "stats": {"volume": 50}
+        }
+        
+        # 创建异步mock函数，根据调用参数返回不同数据
+        call_count = [0]
+        async def mock_request(method, params=None):
+            call_count[0] += 1
+            if "get_instruments" in method:
+                return mock_instruments
+            elif "ticker" in method:
+                return mock_ticker
+            return {}
         
         with patch.object(connector, '_request', side_effect=mock_request):
             contracts = await connector.get_options_chain("BTC")
