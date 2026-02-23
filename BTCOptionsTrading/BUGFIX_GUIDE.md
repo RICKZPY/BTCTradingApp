@@ -29,6 +29,22 @@
 2. 修改 `frontend/src/api/scheduledTrading.ts`:
    - 所有路径从 `/scheduled-trading/*` 改为 `/api/scheduled-trading/*`
 
+### 问题3：使用模板构建失败 ❌ → ✅
+
+**错误信息**: `'DeribitConnector' object has no attribute 'get_current_price'`
+
+**原因**: 
+1. `SmartStrategyBuilder` 调用了不存在的 `get_current_price` 方法
+2. `DeribitConnector` 缺少 `get_instruments` 方法
+
+**修复**:
+1. 在 `backend/src/strategy/smart_strategy_builder.py` 中:
+   - 将 `get_current_price` 改为 `get_index_price`
+   - 添加 `Decimal` 类型转换
+
+2. 在 `backend/src/connectors/deribit_connector.py` 中:
+   - 添加 `get_instruments` 方法返回原始合约数据
+
 ## 验证修复
 
 ### 1. 重启后端服务器
