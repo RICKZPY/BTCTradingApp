@@ -15,6 +15,18 @@ fi
 
 # 列出 /opt 下可能的旧文件
 echo "检查 /opt 目录..."
+if [ -d "/opt/orderbook-collector" ]; then
+    echo "发现: /opt/orderbook-collector"
+    ls -lh /opt/orderbook-collector
+    echo ""
+    read -p "确认删除 /opt/orderbook-collector? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        rm -rf /opt/orderbook-collector
+        echo "✓ 已删除 /opt/orderbook-collector"
+    fi
+fi
+
 if [ -d "/opt/orderbook_collector" ]; then
     echo "发现: /opt/orderbook_collector"
     ls -lh /opt/orderbook_collector

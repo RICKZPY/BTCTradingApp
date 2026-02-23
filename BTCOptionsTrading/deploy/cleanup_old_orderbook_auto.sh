@@ -14,7 +14,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 删除可能的旧目录
-for dir in /opt/orderbook_collector /opt/btc_orderbook /opt/orderbook /opt/BTCOptionsTrading; do
+for dir in /opt/orderbook-collector /opt/orderbook_collector /opt/btc_orderbook /opt/orderbook /opt/BTCOptionsTrading; do
     if [ -d "$dir" ]; then
         echo "删除: $dir"
         rm -rf "$dir"
