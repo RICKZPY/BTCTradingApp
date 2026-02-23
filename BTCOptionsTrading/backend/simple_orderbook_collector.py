@@ -30,7 +30,7 @@ async def get_instruments(session):
     params = {
         "currency": "BTC",
         "kind": "option",
-        "expired": False
+        "expired": "false"
     }
     async with session.get(url, params=params) as resp:
         data = await resp.json()
