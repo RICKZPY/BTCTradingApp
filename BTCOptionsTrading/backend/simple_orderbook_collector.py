@@ -74,7 +74,7 @@ async def get_orderbook(session, instrument_name):
     return None
 
 async def collect_orderbooks(instruments):
-    """收集所有选定合约的orderbook"""
+    """收集所有选定合约的orderbook（只取最优2档）"""
     timestamp = datetime.now(pytz.timezone('Asia/Shanghai'))
     results = []
     
@@ -82,8 +82,8 @@ async def collect_orderbooks(instruments):
         for inst in instruments:
             orderbook = await get_orderbook(session, inst['instrument_name'])
             if orderbook:
-                # 记录每个bid
-                for bid in orderbook.get('bids', []):
+                # 只取前2档bid
+                for bid in orderbook.get('bids', [])[:2]:
                     results.append({
                         'timestamp': timestamp.isoformat(),
                         'instrument': inst['instrument_name'],
@@ -95,8 +95,8 @@ async def collect_orderbooks(instruments):
                         'amount': bid[1]
                     })
                 
-                # 记录每个ask
-                for ask in orderbook.get('asks', []):
+                # 只取前2档ask
+                for ask in orderbook.get('asks', [])[:2]:
                     results.append({
                         'timestamp': timestamp.isoformat(),
                         'instrument': inst['instrument_name'],
