@@ -7,7 +7,7 @@ export const scheduledTradingApi = {
     api_secret: string
     testnet: boolean
   }) => {
-    const response = await apiClient.post('/scheduled-trading/initialize', credentials)
+    const response = await apiClient.post('/api/scheduled-trading/initialize', credentials)
     return response.data
   },
 
@@ -20,49 +20,49 @@ export const scheduledTradingApi = {
     auto_close: boolean
     close_time: string | null
   }) => {
-    const response = await apiClient.post('/scheduled-trading/add-strategy', data)
+    const response = await apiClient.post('/api/scheduled-trading/add-strategy', data)
     return response.data
   },
 
   // 获取所有定时策略
   getScheduledStrategies: async () => {
-    const response = await apiClient.get('/scheduled-trading/strategies')
+    const response = await apiClient.get('/api/scheduled-trading/strategies')
     return response.data
   },
 
   // 启用策略
   enableStrategy: async (strategyId: string) => {
-    const response = await apiClient.post(`/scheduled-trading/enable/${strategyId}`)
+    const response = await apiClient.post(`/api/scheduled-trading/enable/${strategyId}`)
     return response.data
   },
 
   // 禁用策略
   disableStrategy: async (strategyId: string) => {
-    const response = await apiClient.post(`/scheduled-trading/disable/${strategyId}`)
+    const response = await apiClient.post(`/api/scheduled-trading/disable/${strategyId}`)
     return response.data
   },
 
   // 移除策略
   removeStrategy: async (strategyId: string) => {
-    const response = await apiClient.delete(`/scheduled-trading/${strategyId}`)
+    const response = await apiClient.delete(`/api/scheduled-trading/${strategyId}`)
     return response.data
   },
 
   // 获取执行日志
   getExecutionLog: async () => {
-    const response = await apiClient.get('/scheduled-trading/execution-log')
+    const response = await apiClient.get('/api/scheduled-trading/execution-log')
     return response.data
   },
 
   // 获取账户摘要
   getAccountSummary: async () => {
-    const response = await apiClient.get('/scheduled-trading/account-summary')
+    const response = await apiClient.get('/api/scheduled-trading/account-summary')
     return response.data
   },
 
   // 获取持仓
   getPositions: async () => {
-    const response = await apiClient.get('/scheduled-trading/positions')
+    const response = await apiClient.get('/api/scheduled-trading/positions')
     return response.data
   }
 }

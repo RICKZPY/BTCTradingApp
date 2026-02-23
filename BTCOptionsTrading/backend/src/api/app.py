@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from src.config.settings import Settings
 from src.config.logging_config import get_logger
-from src.api.routes import health, strategies, backtest, data, settings as settings_routes, websocket, historical_data, options_chain_smart, csv_data, orderbook, trading
+from src.api.routes import health, strategies, backtest, data, settings as settings_routes, websocket, historical_data, options_chain_smart, csv_data, orderbook, trading, smart_strategy, scheduled_trading
 from src.monitoring import get_monitor
 from src.scheduler.task_scheduler import get_scheduler
 
@@ -84,6 +84,8 @@ def create_app(settings: Settings = None) -> FastAPI:
     app.include_router(csv_data.router, prefix="/api/csv", tags=["CSV Data"])
     app.include_router(orderbook.router, prefix="/api/orderbook", tags=["Order Book"])
     app.include_router(trading.router, prefix="/api/trading", tags=["Trading"])
+    app.include_router(smart_strategy.router, prefix="/api", tags=["Smart Strategy"])
+    app.include_router(scheduled_trading.router, prefix="/api", tags=["Scheduled Trading"])
     app.include_router(settings_routes.router, tags=["Settings"])
     app.include_router(websocket.router, tags=["WebSocket"])
     app.include_router(historical_data.router, tags=["Historical Data"])

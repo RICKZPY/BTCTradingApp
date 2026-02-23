@@ -3,19 +3,19 @@ import { apiClient } from './client'
 export const smartStrategyApi = {
   // 获取相对到期日选项
   getRelativeExpiries: async () => {
-    const response = await apiClient.get('/smart-strategy/relative-expiries')
+    const response = await apiClient.get('/api/smart-strategy/relative-expiries')
     return response.data
   },
 
   // 获取相对行权价选项
   getRelativeStrikes: async () => {
-    const response = await apiClient.get('/smart-strategy/relative-strikes')
+    const response = await apiClient.get('/api/smart-strategy/relative-strikes')
     return response.data
   },
 
   // 获取预定义模板
   getTemplates: async () => {
-    const response = await apiClient.get('/smart-strategy/templates')
+    const response = await apiClient.get('/api/smart-strategy/templates')
     return response.data
   },
 
@@ -33,14 +33,14 @@ export const smartStrategyApi = {
     }>
     underlying?: string
   }) => {
-    const response = await apiClient.post('/smart-strategy/build', data)
+    const response = await apiClient.post('/api/smart-strategy/build', data)
     return response.data
   },
 
   // 从模板构建
   buildFromTemplate: async (templateId: string, underlying: string = 'BTC') => {
     const response = await apiClient.post(
-      `/smart-strategy/build-from-template/${templateId}`,
+      `/api/smart-strategy/build-from-template/${templateId}`,
       null,
       { params: { underlying } }
     )
@@ -54,7 +54,7 @@ export const smartStrategyApi = {
     relativeStrike: string,
     underlying: string = 'BTC'
   ) => {
-    const response = await apiClient.get('/smart-strategy/preview', {
+    const response = await apiClient.get('/api/smart-strategy/preview', {
       params: {
         option_type: optionType,
         relative_expiry: relativeExpiry,
