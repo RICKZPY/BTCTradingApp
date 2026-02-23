@@ -91,9 +91,12 @@ const HistoricalDataTab = () => {
       if (instrumentList.length === 0) {
         console.info('数据库中没有合约，尝试从 CSV 数据获取...')
         try {
+          console.log('正在调用 csvApi.getContracts("BTC")...')
           const csvContracts = await csvApi.getContracts('BTC')
           console.log(`从 CSV 获取了 ${csvContracts.length} 个合约`)
+          console.log('CSV合约示例:', csvContracts.slice(0, 3))
           const csvInstrumentList = csvContracts.map(c => c.instrument_name)
+          console.log(`转换后的合约列表长度: ${csvInstrumentList.length}`)
           setInstruments(csvInstrumentList)
           if (csvInstrumentList.length > 0 && !selectedInstrument) {
             setSelectedInstrument(csvInstrumentList[0])
@@ -102,6 +105,7 @@ const HistoricalDataTab = () => {
           return
         } catch (csvErr) {
           console.error('从 CSV 获取合约失败:', csvErr)
+          console.error('错误详情:', csvErr instanceof Error ? csvErr.message : String(csvErr))
           setError('无法加载合约数据')
           return
         }

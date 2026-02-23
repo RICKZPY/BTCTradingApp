@@ -9,8 +9,9 @@ from fastapi.responses import JSONResponse
 
 from src.config.settings import Settings
 from src.config.logging_config import get_logger
-from src.api.routes import health, strategies, backtest, data, settings as settings_routes, websocket, historical_data, options_chain_smart, csv_data
+from src.api.routes import health, strategies, backtest, data, settings as settings_routes, websocket, historical_data, options_chain_smart, csv_data, orderbook, trading
 from src.monitoring import get_monitor
+from src.scheduler.task_scheduler import get_scheduler
 
 logger = get_logger(__name__)
 
@@ -81,6 +82,8 @@ def create_app(settings: Settings = None) -> FastAPI:
     app.include_router(data.router, prefix="/api/data", tags=["Data"])
     app.include_router(options_chain_smart.router, prefix="/api/options", tags=["Options Chain Smart"])
     app.include_router(csv_data.router, prefix="/api/csv", tags=["CSV Data"])
+    app.include_router(orderbook.router, prefix="/api/orderbook", tags=["Order Book"])
+    app.include_router(trading.router, prefix="/api/trading", tags=["Trading"])
     app.include_router(settings_routes.router, tags=["Settings"])
     app.include_router(websocket.router, tags=["WebSocket"])
     app.include_router(historical_data.router, tags=["Historical Data"])
@@ -108,11 +111,27 @@ def create_app(settings: Settings = None) -> FastAPI:
         asyncio.create_task(websocket.start_market_data_stream())
         asyncio.create_task(websocket.start_options_chain_stream())
         logger.info("WebSocket data streams started")
+        
+        # 启动定时任务调度器
+        try:
+            scheduler = get_scheduler()
+            scheduler.start()
+            logger.info("Task scheduler started")
+        except Exception as e:
+            logger.error(f"Error starting task scheduler: {e}")
     
     # 关闭事件
     @app.on_event("shutdown")
     async def shutdown_event():
         logger.info("Shutting down BTC Options Trading System API")
+        
+        # 停止定时任务调度器
+        try:
+            scheduler = get_scheduler()
+            scheduler.stop()
+            logger.info("Task scheduler stopped")
+        except Exception as e:
+            logger.error(f"Error stopping task scheduler: {e}")
     
     return app
 

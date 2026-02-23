@@ -417,6 +417,33 @@ class DeribitConnector(IDeribitConnector):
             logger.error(f"Failed to get real-time data: {str(e)}")
             raise APIConnectionError(f"Failed to get real-time data: {str(e)}")
     
+    async def get_orderbook(self, instrument_name: str, depth: int = 10) -> Dict:
+        """
+        获取订单簿数据
+        
+        Args:
+            instrument_name: 合约名称
+            depth: 订单簿深度
+            
+        Returns:
+            订单簿数据
+        """
+        try:
+            result = await self._request(
+                "public/get_order_book",
+                {
+                    "instrument_name": instrument_name,
+                    "depth": depth
+                }
+            )
+            
+            logger.info(f"Retrieved orderbook for {instrument_name}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to get orderbook: {str(e)}")
+            return {}
+    
     async def get_volatility_surface(self, currency: str = "BTC") -> VolatilitySurface:
         """
         获取波动率曲面
@@ -435,15 +462,14 @@ class DeribitConnector(IDeribitConnector):
             strikes = sorted(list(set(c.strike_price for c in contracts)))
             expiries = sorted(list(set(c.expiration_date for c in contracts)))
             
-            # 构建波动率矩阵
-            import numpy as np
-            volatilities = np.zeros((len(expiries), len(strikes)))
+            # 构建波动率矩阵（使用列表而不是 numpy）
+            volatilities = [[0.0 for _ in range(len(strikes))] for _ in range(len(expiries))]
             
             for contract in contracts:
                 try:
                     exp_idx = expiries.index(contract.expiration_date)
                     strike_idx = strikes.index(contract.strike_price)
-                    volatilities[exp_idx, strike_idx] = contract.implied_volatility
+                    volatilities[exp_idx][strike_idx] = contract.implied_volatility
                 except ValueError:
                     continue
             

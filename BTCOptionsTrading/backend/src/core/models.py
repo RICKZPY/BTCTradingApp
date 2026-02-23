@@ -10,8 +10,6 @@ from enum import Enum
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
 
-import numpy as np
-
 
 class OptionType(str, Enum):
     """期权类型枚举"""
@@ -300,14 +298,17 @@ class VolatilitySurface:
     """波动率曲面"""
     strikes: List[Decimal]
     expiries: List[datetime]
-    volatilities: np.ndarray  # 2D array of implied volatilities
+    volatilities: List[List[float]]  # 2D list of implied volatilities
     timestamp: datetime = field(default_factory=datetime.now)
     
     def interpolate_volatility(self, strike: Decimal, expiry: datetime) -> float:
         """插值计算指定执行价和到期日的波动率"""
         # 简化实现，实际应使用更复杂的插值方法
         # 这里返回平均波动率作为占位符
-        return float(np.mean(self.volatilities))
+        if self.volatilities:
+            flat = [v for row in self.volatilities for v in row]
+            return sum(flat) / len(flat) if flat else 0.0
+        return 0.0
 
 
 @dataclass
