@@ -10,6 +10,8 @@ import StrategyEditModal from '../strategy/StrategyEditModal'
 import StrikePicker from '../strategy/StrikePicker'
 import StrategyWizard from '../strategy/StrategyWizard'
 import PayoffDiagram from '../strategy/PayoffDiagram'
+import SmartStrategyBuilder from '../strategy/SmartStrategyBuilder'
+import ScheduledTradingManager from '../strategy/ScheduledTradingManager'
 
 const StrategiesTab = () => {
   const [strategies, setStrategies] = useState<Strategy[]>([])
@@ -17,6 +19,8 @@ const StrategiesTab = () => {
   const [isLoading, setIsLoading] = useState(true)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [isWizardOpen, setIsWizardOpen] = useState(false)
+  const [isSmartBuilderOpen, setIsSmartBuilderOpen] = useState(false)
+  const [isScheduledTradingOpen, setIsScheduledTradingOpen] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
   const [isCreating, setIsCreating] = useState(false)
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null)
@@ -677,6 +681,20 @@ const StrategiesTab = () => {
         <div className="flex gap-3">
           <button 
             className="btn btn-secondary"
+            onClick={() => setIsScheduledTradingOpen(true)}
+            title="管理定时交易"
+          >
+            ⏰ 定时交易
+          </button>
+          <button 
+            className="btn btn-secondary"
+            onClick={() => setIsSmartBuilderOpen(true)}
+            title="使用智能构建器（相对参数）"
+          >
+            🧠 智能构建
+          </button>
+          <button 
+            className="btn btn-secondary"
             onClick={() => setIsCreateModalOpen(true)}
             title="快速创建（简化表单）"
           >
@@ -1225,6 +1243,36 @@ const StrategiesTab = () => {
         underlyingPrice={underlyingPrice}
         initialData={copyInitialData}
       />
+
+      {/* 智能策略构建器 */}
+      <Modal
+        isOpen={isSmartBuilderOpen}
+        onClose={() => setIsSmartBuilderOpen(false)}
+        title="智能策略构建器"
+        size="xl"
+      >
+        <SmartStrategyBuilder
+          onStrategyBuilt={(strategy) => {
+            setSuccessMessage('策略构建成功！')
+            setIsSmartBuilderOpen(false)
+            loadStrategies()
+          }}
+          onCancel={() => setIsSmartBuilderOpen(false)}
+        />
+      </Modal>
+
+      {/* 定时交易管理 */}
+      <Modal
+        isOpen={isScheduledTradingOpen}
+        onClose={() => setIsScheduledTradingOpen(false)}
+        title="定时交易管理"
+        size="xl"
+      >
+        <ScheduledTradingManager
+          strategies={strategies}
+          onClose={() => setIsScheduledTradingOpen(false)}
+        />
+      </Modal>
     </div>
   )
 }
