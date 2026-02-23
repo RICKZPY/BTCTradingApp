@@ -114,7 +114,7 @@ npm run dev
 ```
 BTCOptionsTrading/
 ├── backend/
-│   ├── src/
+│   ├── src/                  # 核心源代码
 │   │   ├── api/              # REST API接口
 │   │   ├── backtest/         # 回测引擎
 │   │   ├── config/           # 配置管理
@@ -123,27 +123,32 @@ BTCOptionsTrading/
 │   │   ├── pricing/          # 期权定价引擎
 │   │   ├── storage/          # 数据存储层
 │   │   ├── strategy/         # 策略管理器
+│   │   ├── historical/       # 历史数据管理
 │   │   └── volatility/       # 波动率分析器
-│   ├── tests/                # 测试文件 (89个测试)
+│   ├── scripts/              # 工具脚本（环境检查、诊断、部署）
+│   ├── tests/                # 测试文件
+│   ├── docs/                 # 文档
 │   ├── examples/             # 使用示例
-│   ├── data/                 # SQLite数据库
+│   ├── data/                 # 数据文件
+│   │   ├── orderbook/        # Orderbook数据
+│   │   ├── downloads/        # 下载的CSV
+│   │   └── exports/          # 导出数据
 │   ├── logs/                 # 日志文件
-│   ├── requirements.txt      # Python依赖
-│   └── run_api.py            # API启动脚本
+│   ├── main.py               # 主应用入口
+│   ├── simple_orderbook_collector.py  # Orderbook收集器
+│   └── requirements.txt      # Python依赖
 ├── frontend/
-│   ├── src/
+│   ├── src/                  # 源代码
 │   │   ├── api/              # API客户端
 │   │   ├── components/       # React组件
-│   │   │   ├── tabs/         # 5个Tab页面
-│   │   │   ├── charts/       # 图表组件
-│   │   │   └── ...           # UI组件库
 │   │   ├── hooks/            # 自定义Hooks
-│   │   ├── store/            # Zustand状态管理
-│   │   └── App.tsx           # 根组件
-│   ├── package.json          # npm依赖
-│   └── vite.config.ts        # Vite配置
-├── PROGRESS.md               # 详细开发进度
-├── SYSTEM_SUMMARY.md         # 系统总结文档
+│   │   └── store/            # 状态管理
+│   ├── tests/                # 测试文件
+│   └── package.json          # npm依赖
+├── deploy/                   # 部署脚本
+│   ├── deploy.sh             # 主部署脚本
+│   ├── deploy_simple_orderbook.sh  # Orderbook部署
+│   └── cleanup_old_orderbook_auto.sh  # 清理脚本
 └── README.md                 # 本文件
 ```
 
