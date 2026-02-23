@@ -5,8 +5,9 @@
 - ATM附近4个价位的期权
 - 到期日在一个月内
 - 包括call和put
-- 收集5点前后1分钟（共2分钟）的所有bid/ask价格和订单大小
-- 保存为CSV格式
+- 收集3组数据，每组间隔30秒
+- 每组收集最优2档bid/ask价格和订单大小
+- 保存为CSV格式，文件名包含BTC价格
 
 ## 快速开始
 
@@ -30,7 +31,9 @@ cd BTCOptionsTrading/backend
 ### 4. 查看收集的数据
 数据保存在：`BTCOptionsTrading/backend/data/orderbook/`
 
-文件格式：`orderbook_YYYYMMDD_HHMMSS.csv`
+文件格式：`orderbook_YYYYMMDD_HHMMSS_BTC{price}.csv`
+
+例如：`orderbook_20260223_050000_BTC95234.csv`
 
 ## CSV数据格式
 

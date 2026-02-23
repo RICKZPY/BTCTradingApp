@@ -13,8 +13,8 @@ import pytz
 # 配置
 DERIBIT_API = "https://www.deribit.com/api/v2"
 DATA_DIR = Path(__file__).parent / "data" / "orderbook"
-COLLECTION_DURATION = 120  # 收集2分钟（5点前后1分钟）
-COLLECTION_INTERVAL = 1  # 每秒收集一次
+COLLECTION_COUNT = 3  # 收集3组数据
+COLLECTION_INTERVAL = 30  # 每30秒收集一次
 
 async def get_btc_price(session):
     """获取BTC当前价格"""
@@ -132,18 +132,17 @@ async def main():
     
     # 收集数据
     all_data = []
-    start_time = datetime.now()
-    iteration = 0
     
-    while (datetime.now() - start_time).total_seconds() < COLLECTION_DURATION:
-        iteration += 1
-        print(f"\n第 {iteration} 次收集 ({datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M:%S')})")
+    for iteration in range(1, COLLECTION_COUNT + 1):
+        print(f"\n第 {iteration}/{COLLECTION_COUNT} 次收集 ({datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M:%S')})")
         
         data = await collect_orderbooks(selected)
         all_data.extend(data)
         print(f"收集了 {len(data)} 条记录")
         
-        await asyncio.sleep(COLLECTION_INTERVAL)
+        if iteration < COLLECTION_COUNT:
+            print(f"等待 {COLLECTION_INTERVAL} 秒...")
+            await asyncio.sleep(COLLECTION_INTERVAL)
     
     # 保存到CSV
     if all_data:
