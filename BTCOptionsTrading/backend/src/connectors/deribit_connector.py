@@ -491,6 +491,34 @@ class DeribitConnector(IDeribitConnector):
             logger.error(f"Failed to get volatility surface: {str(e)}")
             raise APIConnectionError(f"Failed to get volatility surface: {str(e)}")
     
+    async def get_instruments(self, currency: str = "BTC", kind: str = "option") -> List[Dict]:
+        """
+        获取原始的合约列表（不包含市场数据）
+        
+        Args:
+            currency: 货币类型
+            kind: 合约类型（option, future等）
+            
+        Returns:
+            合约信息列表
+        """
+        try:
+            result = await self._request(
+                "public/get_instruments",
+                {
+                    "currency": currency,
+                    "kind": kind,
+                    "expired": False
+                }
+            )
+            
+            logger.info(f"Retrieved {len(result)} {kind} instruments for {currency}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to get instruments: {str(e)}")
+            raise APIConnectionError(f"Failed to get instruments: {str(e)}")
+    
     async def close(self):
         """关闭连接"""
         await self.client.aclose()

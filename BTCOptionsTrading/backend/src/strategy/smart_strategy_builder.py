@@ -214,7 +214,8 @@ class SmartStrategyBuilder:
         logger.info(f"构建策略: {template.name}")
         
         # 获取当前BTC价格
-        current_price = await self.connector.get_current_price(underlying)
+        current_price = await self.connector.get_index_price(underlying)
+        current_price = Decimal(str(current_price))
         logger.info(f"当前{underlying}价格: ${current_price}")
         
         # 构建策略腿
