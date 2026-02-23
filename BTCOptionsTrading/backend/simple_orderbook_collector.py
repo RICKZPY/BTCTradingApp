@@ -60,9 +60,9 @@ def filter_atm_options(instruments, btc_price, days_limit=30):
     return filtered
 
 async def get_orderbook(session, instrument_name):
-    """获取单个合约的orderbook"""
+    """获取单个合约的orderbook（只取前2档）"""
     url = f"{DERIBIT_API}/public/get_order_book"
-    params = {"instrument_name": instrument_name, "depth": 10}
+    params = {"instrument_name": instrument_name, "depth": "2"}
     
     try:
         async with session.get(url, params=params) as resp:
@@ -115,10 +115,6 @@ async def main():
     print("开始收集orderbook数据...")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     
-    # 生成CSV文件名
-    beijing_time = datetime.now(pytz.timezone('Asia/Shanghai'))
-    csv_filename = DATA_DIR / f"orderbook_{beijing_time.strftime('%Y%m%d_%H%M%S')}.csv"
-    
     # 获取要监控的合约
     async with aiohttp.ClientSession() as session:
         btc_price = await get_btc_price(session)
@@ -129,6 +125,10 @@ async def main():
         print(f"选中 {len(selected)} 个期权合约")
         for inst in selected:
             print(f"  - {inst['instrument_name']}")
+    
+    # 生成CSV文件名（包含BTC价格）
+    beijing_time = datetime.now(pytz.timezone('Asia/Shanghai'))
+    csv_filename = DATA_DIR / f"orderbook_{beijing_time.strftime('%Y%m%d_%H%M%S')}_BTC{int(btc_price)}.csv"
     
     # 收集数据
     all_data = []
