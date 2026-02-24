@@ -79,6 +79,7 @@ case $choice in
             "sqlalchemy<2.0.0"
             "apscheduler"
             "pyyaml"
+            "psutil"
         )
         
         failed_deps=()
@@ -116,7 +117,7 @@ esac
 # 验证关键包
 echo -e "\n${YELLOW}验证关键包...${NC}"
 
-packages_to_check=("fastapi" "uvicorn" "numpy" "pandas" "sqlalchemy" "aiohttp")
+packages_to_check=("fastapi" "uvicorn" "numpy" "pandas" "sqlalchemy" "aiohttp" "psutil")
 all_ok=true
 
 for package in "${packages_to_check[@]}"; do

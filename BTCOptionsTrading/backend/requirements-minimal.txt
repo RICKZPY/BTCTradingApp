@@ -29,3 +29,6 @@ apscheduler>=3.10.0
 
 # 配置文件
 pyyaml>=6.0
+
+# 系统监控（必需）
+psutil>=5.9.0
