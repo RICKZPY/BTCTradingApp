@@ -64,6 +64,24 @@ class DeribitTrader:
         except Exception as e:
             logger.error(f"认证异常: {e}")
             return False
+    async def test_connection(self) -> bool:
+        """
+        测试API连接
+
+        Returns:
+            连接是否成功
+        """
+        try:
+            # 尝试认证来测试连接
+            success = await self.authenticate()
+            if success:
+                logger.info("API连接测试成功")
+            else:
+                logger.error("API连接测试失败")
+            return success
+        except Exception as e:
+            logger.error(f"API连接测试异常: {e}")
+            return False
     
     async def _make_request(self, method: str, params: Dict) -> Optional[Dict]:
         """

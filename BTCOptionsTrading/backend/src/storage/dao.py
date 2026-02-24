@@ -7,7 +7,7 @@ from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, desc
 
 from src.storage.models import (
@@ -106,8 +106,10 @@ class StrategyDAO:
     
     @staticmethod
     def get_by_id(db: Session, strategy_id: UUID) -> Optional[StrategyModel]:
-        """根据ID获取策略"""
-        return db.query(StrategyModel).filter(
+        """根据ID获取策略（预加载关联数据）"""
+        return db.query(StrategyModel).options(
+            joinedload(StrategyModel.legs).joinedload(StrategyLegModel.option_contract)
+        ).filter(
             StrategyModel.id == str(strategy_id)
         ).first()
     
@@ -137,9 +139,20 @@ class StrategyDAO:
     
     @staticmethod
     def delete(db: Session, strategy_id: UUID) -> bool:
-        """删除策略"""
+        """删除策略及其关联的回测结果和策略腿"""
         db_strategy = StrategyDAO.get_by_id(db, strategy_id)
         if db_strategy:
+            # 先删除关联的回测结果
+            db.query(BacktestResultModel).filter(
+                BacktestResultModel.strategy_id == str(strategy_id)
+            ).delete()
+            
+            # 删除关联的策略腿
+            db.query(StrategyLegModel).filter(
+                StrategyLegModel.strategy_id == str(strategy_id)
+            ).delete()
+            
+            # 最后删除策略本身
             db.delete(db_strategy)
             db.commit()
             return True

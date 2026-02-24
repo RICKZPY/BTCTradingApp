@@ -12,6 +12,7 @@ import StrategyWizard from '../strategy/StrategyWizard'
 import PayoffDiagram from '../strategy/PayoffDiagram'
 import SmartStrategyBuilder from '../strategy/SmartStrategyBuilder'
 import ScheduledTradingManager from '../strategy/ScheduledTradingManager'
+import QuickTradingModal from '../strategy/QuickTradingModal'
 
 const StrategiesTab = () => {
   const [strategies, setStrategies] = useState<Strategy[]>([])
@@ -21,6 +22,8 @@ const StrategiesTab = () => {
   const [isWizardOpen, setIsWizardOpen] = useState(false)
   const [isSmartBuilderOpen, setIsSmartBuilderOpen] = useState(false)
   const [isScheduledTradingOpen, setIsScheduledTradingOpen] = useState(false)
+  const [isQuickTradingOpen, setIsQuickTradingOpen] = useState(false)
+  const [quickTradingStrategy, setQuickTradingStrategy] = useState<Strategy | null>(null)
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
   const [isCreating, setIsCreating] = useState(false)
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null)
@@ -947,6 +950,21 @@ const StrategiesTab = () => {
                     <p className="text-text-disabled text-xs mt-2">
                       创建时间: {formatDate(strategy.created_at)}
                     </p>
+                    
+                    {/* 快速操作按钮 */}
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setQuickTradingStrategy(strategy)
+                          setIsQuickTradingOpen(true)
+                        }}
+                        className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors"
+                        title="立即执行交易"
+                      >
+                        ⚡ 快速交易
+                      </button>
+                    </div>
                   </div>
                   <button
                     onClick={(e) => {
@@ -1272,6 +1290,30 @@ const StrategiesTab = () => {
           strategies={strategies}
           onClose={() => setIsScheduledTradingOpen(false)}
         />
+      </Modal>
+
+      {/* 快速交易 */}
+      <Modal
+        isOpen={isQuickTradingOpen}
+        onClose={() => {
+          setIsQuickTradingOpen(false)
+          setQuickTradingStrategy(null)
+        }}
+        title="⚡ 快速交易"
+        size="lg"
+      >
+        {quickTradingStrategy && (
+          <QuickTradingModal
+            strategy={quickTradingStrategy}
+            onClose={() => {
+              setIsQuickTradingOpen(false)
+              setQuickTradingStrategy(null)
+            }}
+            onSuccess={() => {
+              loadStrategies()
+            }}
+          />
+        )}
       </Modal>
     </div>
   )

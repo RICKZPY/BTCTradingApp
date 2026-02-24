@@ -10,8 +10,11 @@ import logging
 from ...trading.deribit_trader import DeribitTrader
 from ...trading.scheduled_trading import ScheduledTradingManager
 from ...core.models import Strategy, StrategyLeg, StrategyType, OptionContract, ActionType, OptionType
+from ...storage.database import get_db
+from ...storage.dao import StrategyDAO
 from decimal import Decimal
 from uuid import UUID
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -94,28 +97,88 @@ async def initialize_manager(credentials: DeribitCredentials):
 @router.post("/add-strategy")
 async def add_scheduled_strategy(
     request: ScheduledStrategyRequest,
-    manager: ScheduledTradingManager = Depends(get_manager)
+    manager: ScheduledTradingManager = Depends(get_manager),
+    db: Session = Depends(get_db)
 ):
     """
     添加定时策略
     """
     try:
-        # 这里需要从策略管理器获取策略对象
-        # 简化实现，实际应该从数据库或策略管理器获取
-        strategy_id = request.strategy_id
+        # 从数据库获取策略
+        strategy_uuid = UUID(request.strategy_id)
+        strategy_model = StrategyDAO.get_by_id(db, strategy_uuid)
         
-        # TODO: 从策略管理器获取完整的策略对象
-        # strategy = strategy_manager.get_strategy(strategy_id)
+        if not strategy_model:
+            raise HTTPException(status_code=404, detail=f"策略不存在: {request.strategy_id}")
         
-        # 暂时返回成功（需要集成策略管理器）
+        # 转换为Strategy对象
+        legs = []
+        for leg_model in strategy_model.legs:
+            # 从关联的option_contract获取基本信息
+            contract_model = leg_model.option_contract
+            
+            # 创建OptionContract对象（使用默认值，实际交易时会更新）
+            contract = OptionContract(
+                instrument_name=contract_model.instrument_name,
+                underlying=contract_model.underlying,
+                option_type=OptionType(contract_model.option_type),
+                strike_price=Decimal(str(contract_model.strike_price)),
+                expiration_date=contract_model.expiration_date,
+                # 以下字段使用默认值（执行时会从市场获取实时数据）
+                current_price=Decimal('0'),
+                bid_price=Decimal('0'),
+                ask_price=Decimal('0'),
+                last_price=Decimal('0'),
+                implied_volatility=0.0,
+                delta=0.0,
+                gamma=0.0,
+                theta=0.0,
+                vega=0.0,
+                rho=0.0,
+                open_interest=0,
+                volume=0,
+                timestamp=datetime.now()
+            )
+            
+            leg = StrategyLeg(
+                option_contract=contract,
+                action=ActionType(leg_model.action),
+                quantity=leg_model.quantity
+            )
+            legs.append(leg)
+        
+        strategy = Strategy(
+            id=strategy_model.id,
+            name=strategy_model.name,
+            description=strategy_model.description or "",
+            strategy_type=StrategyType(strategy_model.strategy_type),
+            legs=legs,
+            max_profit=Decimal(str(strategy_model.max_profit)) if strategy_model.max_profit else None,
+            max_loss=Decimal(str(strategy_model.max_loss)) if strategy_model.max_loss else None
+        )
+        
+        # 添加到定时交易管理器
+        added_strategy_id = manager.add_scheduled_strategy(
+            strategy=strategy,
+            schedule_time=request.schedule_time,
+            timezone=request.timezone,
+            use_market_order=request.use_market_order,
+            auto_close=request.auto_close,
+            close_time=request.close_time
+        )
+        
+        logger.info(f"成功添加定时策略: {strategy.name}")
+        
         return {
             "success": True,
             "message": "定时策略添加成功",
-            "strategy_id": strategy_id
+            "strategy_id": added_strategy_id
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"添加定时策略失败: {e}")
+        logger.error(f"添加定时策略失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

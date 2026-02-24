@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { smartStrategyApi } from '../../api/smartStrategy'
+import { strategiesApi } from '../../api/strategies'
 import LoadingSpinner from '../LoadingSpinner'
 
 interface SmartLeg {
@@ -31,7 +32,6 @@ const SmartStrategyBuilder = ({ onStrategyBuilt, onCancel }: SmartStrategyBuilde
   const [strikes, setStrikes] = useState<any[]>([])
   const [templates, setTemplates] = useState<any[]>([])
   const [preview, setPreview] = useState<any>(null)
-  const [isLoading, setIsLoading] = useState(false)
   const [isBuilding, setIsBuilding] = useState(false)
 
   useEffect(() => {
@@ -64,7 +64,6 @@ const SmartStrategyBuilder = ({ onStrategyBuilt, onCancel }: SmartStrategyBuilde
   const loadPreview = async (legIndex: number) => {
     const leg = legs[legIndex]
     try {
-      setIsLoading(true)
       const data = await smartStrategyApi.preview(
         leg.option_type,
         leg.relative_expiry,
@@ -73,8 +72,6 @@ const SmartStrategyBuilder = ({ onStrategyBuilt, onCancel }: SmartStrategyBuilde
       setPreview(data)
     } catch (error) {
       console.error('预览失败:', error)
-    } finally {
-      setIsLoading(false)
     }
   }
 
@@ -105,14 +102,36 @@ const SmartStrategyBuilder = ({ onStrategyBuilt, onCancel }: SmartStrategyBuilde
 
   const loadTemplate = async (templateId: string) => {
     try {
-      setIsBuilding(true)
-      const strategy = await smartStrategyApi.buildFromTemplate(templateId)
-      onStrategyBuilt(strategy)
+      // 从模板列表中找到对应的模板
+      const template = templates.find(t => t.id === templateId)
+      if (!template) return
+      
+      // 填充基本信息
+      setName(template.name)
+      setDescription(template.description)
+      setStrategyType(template.strategy_type)
+      
+      // 填充策略腿
+      const templateLegs = template.legs.map((leg: any) => ({
+        option_type: leg.option_type,
+        action: leg.action,
+        quantity: leg.quantity,
+        relative_expiry: leg.relative_expiry,
+        relative_strike: leg.relative_strike
+      }))
+      
+      setLegs(templateLegs)
+      
+      // 延迟预览，等待状态更新
+      setTimeout(() => {
+        if (templateLegs.length > 0) {
+          loadPreview(0)
+        }
+      }, 100)
+      
     } catch (error) {
-      console.error('从模板构建失败:', error)
-      alert('构建失败: ' + (error as Error).message)
-    } finally {
-      setIsBuilding(false)
+      console.error('加载模板失败:', error)
+      alert('加载模板失败: ' + (error as Error).message)
     }
   }
 
@@ -131,6 +150,11 @@ const SmartStrategyBuilder = ({ onStrategyBuilt, onCancel }: SmartStrategyBuilde
         legs,
         underlying: 'BTC'
       })
+      
+      // 保存策略到数据库
+      await saveStrategy(strategy)
+      
+      alert('策略构建并保存成功！')
       onStrategyBuilt(strategy)
     } catch (error) {
       console.error('构建策略失败:', error)
@@ -140,18 +164,41 @@ const SmartStrategyBuilder = ({ onStrategyBuilt, onCancel }: SmartStrategyBuilde
     }
   }
 
+  const saveStrategy = async (strategy: any) => {
+    // 将智能构建的策略转换为策略API需要的格式
+    const strategyData = {
+      name: strategy.name,
+      description: strategy.description,
+      strategy_type: strategy.strategy_type,
+      legs: strategy.legs.map((leg: any) => ({
+        option_contract: {
+          instrument_name: leg.instrument_name,
+          underlying: 'BTC',
+          option_type: leg.option_type,
+          strike_price: leg.strike_price,
+          expiration_date: leg.expiration_date
+        },
+        action: leg.action,
+        quantity: leg.quantity
+      }))
+    }
+    
+    // 调用策略API保存
+    await strategiesApi.create(strategyData)
+  }
+
   return (
     <div className="space-y-6">
       {/* 预定义模板 */}
       <div className="bg-gray-800 rounded-lg p-4">
         <h3 className="text-lg font-semibold mb-3">快速开始 - 使用模板</h3>
+        <p className="text-sm text-gray-400 mb-3">点击模板自动填充下方表单，您可以进一步调整参数</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {templates.map((template) => (
             <button
               key={template.id}
               onClick={() => loadTemplate(template.id)}
-              disabled={isBuilding}
-              className="bg-gray-700 hover:bg-gray-600 p-3 rounded text-left transition-colors disabled:opacity-50"
+              className="bg-gray-700 hover:bg-gray-600 p-3 rounded text-left transition-colors"
             >
               <div className="font-medium">{template.name}</div>
               <div className="text-sm text-gray-400 mt-1">{template.description}</div>

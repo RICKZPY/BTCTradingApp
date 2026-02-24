@@ -380,5 +380,58 @@ PREDEFINED_TEMPLATES = {
                 relative_strike=RelativeStrike.OTM_2
             )
         ]
+    ),
+    
+    # 事件驱动型策略
+    "bullish_news": SmartStrategyTemplate(
+        name="利好消息策略",
+        description="买入ATM看涨期权，适合利好消息居多时",
+        strategy_type=StrategyType.SINGLE_LEG,
+        legs=[
+            SmartStrategyLeg(
+                option_type=OptionType.CALL,
+                action=ActionType.BUY,
+                quantity=1,
+                relative_expiry=RelativeExpiry.T_PLUS_14,  # 两周后（接近三周）
+                relative_strike=RelativeStrike.ATM
+            )
+        ]
+    ),
+    
+    "bearish_news": SmartStrategyTemplate(
+        name="负面消息策略",
+        description="买入ATM看跌期权，适合负面消息居多时",
+        strategy_type=StrategyType.SINGLE_LEG,
+        legs=[
+            SmartStrategyLeg(
+                option_type=OptionType.PUT,
+                action=ActionType.BUY,
+                quantity=1,
+                relative_expiry=RelativeExpiry.T_PLUS_14,  # 两周后（接近三周）
+                relative_strike=RelativeStrike.ATM
+            )
+        ]
+    ),
+    
+    "mixed_news": SmartStrategyTemplate(
+        name="消息混杂策略",
+        description="卖出窄宽跨式，适合消息混杂、预期波动不大时",
+        strategy_type=StrategyType.STRANGLE,
+        legs=[
+            SmartStrategyLeg(
+                option_type=OptionType.CALL,
+                action=ActionType.SELL,
+                quantity=1,
+                relative_expiry=RelativeExpiry.T_PLUS_1,  # 一天后
+                relative_strike=RelativeStrike.OTM_1  # ATM上一档
+            ),
+            SmartStrategyLeg(
+                option_type=OptionType.PUT,
+                action=ActionType.SELL,
+                quantity=1,
+                relative_expiry=RelativeExpiry.T_PLUS_1,  # 一天后
+                relative_strike=RelativeStrike.OTM_1  # ATM下一档
+            )
+        ]
     )
 }

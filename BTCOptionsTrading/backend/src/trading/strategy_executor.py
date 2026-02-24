@@ -98,14 +98,10 @@ class StrategyExecutor:
         instrument_name = leg.option_contract.instrument_name
         amount = abs(leg.quantity)
         
-        # 确定价格
-        if use_market_order:
-            price = None
-            order_type = "market"
-        else:
-            # 使用中间价作为限价
-            price = float(leg.option_contract.mid_price)
-            order_type = "limit"
+        # 确定价格和订单类型
+        # 快速交易默认使用市价单以确保成交
+        price = None
+        order_type = "market"
         
         # 执行买入或卖出
         if leg.action == ActionType.BUY:

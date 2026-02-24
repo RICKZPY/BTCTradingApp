@@ -1,4 +1,4 @@
-import { apiClient } from './client'
+import apiClient from './client'
 
 export const smartStrategyApi = {
   // 获取相对到期日选项
