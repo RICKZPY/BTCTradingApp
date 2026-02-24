@@ -1,43 +1,43 @@
-# Core dependencies (Python 3.7 compatible)
-fastapi==0.103.2
-uvicorn==0.22.0
-pydantic==1.10.12
+# Core dependencies (Python 3.8+ compatible)
+fastapi>=0.103.0
+uvicorn>=0.22.0
+pydantic>=1.10.0
 pydantic-settings>=2.0.0  # For Pydantic v2 compatibility
-websockets==10.4  # WebSocket support
+websockets>=10.4  # WebSocket support
 
-# Mathematical libraries
-numpy==1.21.6
-scipy==1.7.3
-pandas==1.3.5
+# Mathematical libraries (flexible versions for better compatibility)
+numpy>=1.21.0,<2.0.0
+scipy>=1.7.0
+pandas>=1.3.0
 
 # HTTP client
-httpx==0.24.1
-requests==2.31.0
+httpx>=0.24.0
+requests>=2.31.0
 aiohttp>=3.8.0
 
 # Configuration
-python-dotenv==0.21.1
+python-dotenv>=0.21.0
 
 # Logging
 structlog>=23.1.0
 
 # Database
-sqlalchemy==1.4.48
-asyncpg==0.27.0
-psycopg2-binary==2.9.6
-alembic==1.11.1
+sqlalchemy>=1.4.0,<2.0.0
+asyncpg>=0.27.0
+psycopg2-binary>=2.9.0
+alembic>=1.11.0
 
 # Task scheduling
-apscheduler==3.10.4
-pytz==2023.3
+apscheduler>=3.10.0
+pytz>=2023.3
 
 # Testing
-pytest==7.4.2
-pytest-asyncio==0.21.1
-hypothesis==6.79.4
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+hypothesis>=6.79.0
 
 # Configuration management
-pyyaml==6.0.1
+pyyaml>=6.0.0
 
 # System monitoring
-psutil==5.9.5
+psutil>=5.9.0

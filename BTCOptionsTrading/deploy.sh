@@ -30,8 +30,23 @@ echo -e "${GREEN}✓ 代码更新完成${NC}"
 echo -e "\n${YELLOW}[2/5] 检查后端依赖...${NC}"
 cd backend
 if [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt --quiet
-    echo -e "${GREEN}✓ 后端依赖已更新${NC}"
+    echo "尝试安装依赖..."
+    if pip install -r requirements.txt --quiet 2>/dev/null; then
+        echo -e "${GREEN}✓ 后端依赖已更新${NC}"
+    else
+        echo -e "${YELLOW}完整依赖安装失败，尝试最小化安装...${NC}"
+        if [ -f "requirements-minimal.txt" ]; then
+            if pip install -r requirements-minimal.txt --quiet; then
+                echo -e "${GREEN}✓ 最小化依赖安装成功${NC}"
+            else
+                echo -e "${RED}依赖安装失败，请运行: cd backend && ./fix_dependencies.sh${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${RED}依赖安装失败，请手动安装${NC}"
+            exit 1
+        fi
+    fi
 else
     echo -e "${RED}警告: 未找到 requirements.txt${NC}"
 fi
