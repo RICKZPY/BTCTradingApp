@@ -30,13 +30,13 @@ echo -e "${GREEN}✓ 代码更新完成${NC}"
 echo -e "\n${YELLOW}[2/5] 检查后端依赖...${NC}"
 cd backend
 if [ -f "requirements.txt" ]; then
-    echo "尝试安装依赖..."
-    if pip install -r requirements.txt --quiet 2>/dev/null; then
+    echo "尝试安装依赖（这可能需要几分钟）..."
+    if pip install -r requirements.txt 2>/dev/null; then
         echo -e "${GREEN}✓ 后端依赖已更新${NC}"
     else
         echo -e "${YELLOW}完整依赖安装失败，尝试最小化安装...${NC}"
         if [ -f "requirements-minimal.txt" ]; then
-            if pip install -r requirements-minimal.txt --quiet; then
+            if pip install -r requirements-minimal.txt; then
                 echo -e "${GREEN}✓ 最小化依赖安装成功${NC}"
             else
                 echo -e "${RED}依赖安装失败，请运行: cd backend && ./fix_dependencies.sh${NC}"
@@ -56,7 +56,8 @@ cd ..
 echo -e "\n${YELLOW}[3/5] 检查前端依赖...${NC}"
 cd frontend
 if [ -f "package.json" ]; then
-    npm install --silent
+    echo "安装前端依赖（这可能需要几分钟）..."
+    npm install
     echo -e "${GREEN}✓ 前端依赖已更新${NC}"
 else
     echo -e "${RED}警告: 未找到 package.json${NC}"
