@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.trading.deribit_trader import DeribitTrader
 from src.strategy.smart_strategy_builder import SmartStrategyBuilder, StrategyType
 from src.trading.strategy_executor import StrategyExecutor
-from src.connectors.deribit_connector import DeribitConnector
 from dotenv import load_dotenv
 
 # 配置日志
@@ -40,6 +39,39 @@ SENTIMENT_API_URL = "http://43.106.51.106:5001/api/sentiment"
 CHECK_TIME = time(5, 0)  # 每天早上5点检查
 DATA_FILE = "data/sentiment_trading_history.json"
 POSITION_FILE = "data/current_positions.json"
+
+
+class DeribitConnectorAdapter:
+    """DeribitTrader到Connector的适配器"""
+    
+    def __init__(self, trader: DeribitTrader):
+        self.trader = trader
+    
+    async def get_index_price(self, underlying: str) -> float:
+        """获取指数价格"""
+        try:
+            result = await self.trader._make_request(
+                "public/get_index_price",
+                {"index_name": f"{underlying.lower()}_usd"}
+            )
+            if result and 'index_price' in result:
+                return result['index_price']
+            return 0.0
+        except Exception as e:
+            logger.error(f"获取指数价格失败: {e}")
+            return 0.0
+    
+    async def get_instruments(self, currency: str, kind: str) -> List[Dict]:
+        """获取期权合约列表"""
+        try:
+            result = await self.trader._make_request(
+                "public/get_instruments",
+                {"currency": currency, "kind": kind, "expired": False}
+            )
+            return result if result else []
+        except Exception as e:
+            logger.error(f"获取合约列表失败: {e}")
+            return []
 
 
 class SentimentTradingService:
@@ -68,23 +100,20 @@ class SentimentTradingService:
         # 初始化交易器（测试网用于下单）
         self.trader = DeribitTrader(testnet_key, testnet_secret, testnet=True)
         
-        # 初始化连接器（用于策略构建）
-        self.connector = DeribitConnector(testnet_key, testnet_secret, testnet=True)
-        
         # 如果配置了主网密钥，初始化主网连接（用于数据收集）
         self.mainnet_trader = None
-        self.mainnet_connector = None
         if mainnet_key and mainnet_secret:
             self.mainnet_trader = DeribitTrader(mainnet_key, mainnet_secret, testnet=False)
-            self.mainnet_connector = DeribitConnector(mainnet_key, mainnet_secret, testnet=False)
             logger.info("已配置主网连接用于数据收集")
         else:
             logger.warning("未配置主网密钥，将使用测试网数据")
         
         self.executor = StrategyExecutor(self.trader)
-        # 使用主网连接器构建策略（如果有），否则使用测试网连接器
-        strategy_connector = self.mainnet_connector if self.mainnet_connector else self.connector
-        self.strategy_builder = SmartStrategyBuilder(strategy_connector)
+        
+        # 使用主网trader构建策略（如果有），否则使用测试网trader
+        strategy_trader = self.mainnet_trader if self.mainnet_trader else self.trader
+        connector_adapter = DeribitConnectorAdapter(strategy_trader)
+        self.strategy_builder = SmartStrategyBuilder(connector_adapter)
         
         # 确保数据目录存在
         Path("data").mkdir(exist_ok=True)
@@ -288,10 +317,6 @@ class SentimentTradingService:
                 logger.error("Deribit测试网认证失败，服务无法启动")
                 return
             logger.info("Deribit测试网认证成功")
-            
-            # 初始化测试网连接器
-            await self.connector.connect()
-            logger.info("测试网连接器初始化成功")
         except Exception as e:
             logger.error(f"连接Deribit测试网失败: {e}")
             return
@@ -302,17 +327,12 @@ class SentimentTradingService:
                 mainnet_auth = await self.mainnet_trader.authenticate()
                 if mainnet_auth:
                     logger.info("Deribit主网认证成功")
-                    # 初始化主网连接器
-                    await self.mainnet_connector.connect()
-                    logger.info("主网连接器初始化成功")
                 else:
                     logger.warning("Deribit主网认证失败，将使用测试网数据")
                     self.mainnet_trader = None
-                    self.mainnet_connector = None
             except Exception as e:
                 logger.warning(f"连接Deribit主网失败: {e}，将使用测试网数据")
                 self.mainnet_trader = None
-                self.mainnet_connector = None
         
         while True:
             try:
