@@ -50,16 +50,28 @@ async def startup_event():
     global trader
     load_dotenv()
     
-    api_key = os.getenv('DERIBIT_API_KEY')
-    api_secret = os.getenv('DERIBIT_API_SECRET')
+    # 优先使用测试网配置
+    api_key = os.getenv('DERIBIT_TESTNET_API_KEY')
+    api_secret = os.getenv('DERIBIT_TESTNET_API_SECRET')
+    
+    # 兼容旧配置
+    if not api_key or not api_secret:
+        api_key = os.getenv('DERIBIT_API_KEY')
+        api_secret = os.getenv('DERIBIT_API_SECRET')
+        logger.info("使用旧配置格式 DERIBIT_API_KEY")
+    else:
+        logger.info("使用新配置格式 DERIBIT_TESTNET_API_KEY")
     
     if api_key and api_secret:
         trader = DeribitTrader(api_key, api_secret, testnet=True)
         try:
             await trader.authenticate()
-            logger.info("Deribit认证成功")
+            logger.info("Deribit测试网认证成功")
         except Exception as e:
-            logger.error(f"Deribit认证失败: {e}")
+            logger.error(f"Deribit测试网认证失败: {e}")
+            trader = None
+    else:
+        logger.warning("未配置Deribit API密钥，实时功能将不可用")
 
 
 def load_json_file(filepath: str) -> Optional[Dict]:
@@ -234,10 +246,21 @@ async def get_live_orders():
 @app.get("/api/health")
 async def health_check():
     """健康检查"""
+    load_dotenv()
+    
+    # 检查配置
+    has_testnet_config = bool(os.getenv('DERIBIT_TESTNET_API_KEY') and os.getenv('DERIBIT_TESTNET_API_SECRET'))
+    has_old_config = bool(os.getenv('DERIBIT_API_KEY') and os.getenv('DERIBIT_API_SECRET'))
+    
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "trader_initialized": trader is not None
+        "trader_initialized": trader is not None,
+        "config": {
+            "has_testnet_config": has_testnet_config,
+            "has_legacy_config": has_old_config,
+            "using_config": "testnet" if has_testnet_config else ("legacy" if has_old_config else "none")
+        }
     }
 
 

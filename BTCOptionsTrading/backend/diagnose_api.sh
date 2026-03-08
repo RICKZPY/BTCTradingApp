@@ -83,12 +83,39 @@ echo ""
 echo "6. 检查配置文件..."
 if [ -f ".env" ]; then
     echo -e "${GREEN}✓ .env文件存在${NC}"
-    if grep -q "DERIBIT_TESTNET_API_KEY" .env; then
-        echo "  - 已配置测试网API密钥"
+    
+    # 检查测试网配置
+    if grep -q "^DERIBIT_TESTNET_API_KEY=" .env; then
+        testnet_key=$(grep "^DERIBIT_TESTNET_API_KEY=" .env | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+        if [ -n "$testnet_key" ] && [ "$testnet_key" != "your_testnet_api_key_here" ]; then
+            echo -e "  ${GREEN}✓ 测试网API密钥已配置${NC}"
+        else
+            echo -e "  ${RED}✗ 测试网API密钥未配置${NC}"
+        fi
+    else
+        echo -e "  ${YELLOW}⚠ 未找到测试网配置${NC}"
     fi
-    if grep -q "DERIBIT_MAINNET_API_KEY" .env; then
-        echo "  - 已配置主网API密钥"
+    
+    # 检查主网配置
+    if grep -q "^DERIBIT_MAINNET_API_KEY=" .env; then
+        mainnet_key=$(grep "^DERIBIT_MAINNET_API_KEY=" .env | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+        if [ -n "$mainnet_key" ] && [ "$mainnet_key" != "your_mainnet_api_key_here" ]; then
+            echo -e "  ${GREEN}✓ 主网API密钥已配置${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ 主网API密钥未配置（可选）${NC}"
+        fi
     fi
+    
+    # 检查旧配置
+    if grep -q "^DERIBIT_API_KEY=" .env; then
+        old_key=$(grep "^DERIBIT_API_KEY=" .env | cut -d'=' -f2 | tr -d '"' | tr -d "'")
+        if [ -n "$old_key" ] && [ "$old_key" != "your_api_key_here" ]; then
+            echo -e "  ${GREEN}✓ 旧格式API密钥已配置${NC}"
+        fi
+    fi
+    
+    echo ""
+    echo "  运行详细配置检查: ./check_env_config.sh"
 else
     echo -e "${RED}✗ .env文件不存在${NC}"
     echo "  请从.env.example复制并配置"
