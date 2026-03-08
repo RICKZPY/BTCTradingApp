@@ -1,0 +1,17 @@
+[Unit]
+Description=情绪交易状态API服务
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/BTCOptionsTrading/backend
+Environment="PATH=/usr/bin:/usr/local/bin"
+ExecStart=/usr/bin/python3 -m uvicorn sentiment_api:app --host 0.0.0.0 --port 5002
+Restart=always
+RestartSec=10
+StandardOutput=append:/path/to/BTCOptionsTrading/backend/logs/sentiment_api.log
+StandardError=append:/path/to/BTCOptionsTrading/backend/logs/sentiment_api.log
+
+[Install]
+WantedBy=multi-user.target

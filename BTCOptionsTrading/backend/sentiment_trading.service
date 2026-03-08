@@ -1,0 +1,17 @@
+[Unit]
+Description=情绪驱动BTC期权交易服务
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/BTCOptionsTrading/backend
+Environment="PATH=/usr/bin:/usr/local/bin"
+ExecStart=/usr/bin/python3 /path/to/BTCOptionsTrading/backend/sentiment_trading_service.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/path/to/BTCOptionsTrading/backend/logs/sentiment_service.log
+StandardError=append:/path/to/BTCOptionsTrading/backend/logs/sentiment_service.log
+
+[Install]
+WantedBy=multi-user.target
