@@ -47,14 +47,34 @@ class SentimentTradingService:
     def __init__(self):
         load_dotenv()
         
-        # 初始化Deribit交易器（使用测试网）
-        api_key = os.getenv('DERIBIT_API_KEY')
-        api_secret = os.getenv('DERIBIT_API_SECRET')
+        # 获取主网配置（用于数据收集）
+        mainnet_key = os.getenv('DERIBIT_MAINNET_API_KEY')
+        mainnet_secret = os.getenv('DERIBIT_MAINNET_API_SECRET')
         
-        if not api_key or not api_secret:
-            raise ValueError("请在.env文件中配置DERIBIT_API_KEY和DERIBIT_API_SECRET")
+        # 获取测试网配置（用于交易下单）
+        testnet_key = os.getenv('DERIBIT_TESTNET_API_KEY')
+        testnet_secret = os.getenv('DERIBIT_TESTNET_API_SECRET')
         
-        self.trader = DeribitTrader(api_key, api_secret, testnet=True)
+        # 兼容旧配置（如果没有分离配置，使用旧的配置作为测试网）
+        if not testnet_key or not testnet_secret:
+            testnet_key = os.getenv('DERIBIT_API_KEY')
+            testnet_secret = os.getenv('DERIBIT_API_SECRET')
+            logger.warning("未找到测试网专用配置，使用DERIBIT_API_KEY作为测试网密钥")
+        
+        if not testnet_key or not testnet_secret:
+            raise ValueError("请在.env文件中配置DERIBIT_TESTNET_API_KEY和DERIBIT_TESTNET_API_SECRET")
+        
+        # 初始化交易器（测试网用于下单）
+        self.trader = DeribitTrader(testnet_key, testnet_secret, testnet=True)
+        
+        # 如果配置了主网密钥，初始化主网连接（用于数据收集）
+        self.mainnet_trader = None
+        if mainnet_key and mainnet_secret:
+            self.mainnet_trader = DeribitTrader(mainnet_key, mainnet_secret, testnet=False)
+            logger.info("已配置主网连接用于数据收集")
+        else:
+            logger.warning("未配置主网密钥，将使用测试网数据")
+        
         self.executor = StrategyExecutor(self.trader)
         self.strategy_builder = SmartStrategyBuilder()
         
@@ -159,13 +179,13 @@ class SentimentTradingService:
             return {"success": False, "error": str(e)}
     
     async def get_positions_and_orders(self) -> Dict:
-        """获取当前持仓和订单信息"""
+        """获取当前持仓和订单信息（从测试网）"""
         try:
             positions = []
             orders = []
             errors = []
             
-            # 获取持仓
+            # 获取持仓（测试网）
             try:
                 positions_result = await self.trader._make_request(
                     "private/get_positions",
@@ -174,10 +194,10 @@ class SentimentTradingService:
                 if positions_result:
                     positions = positions_result
             except Exception as e:
-                errors.append(f"获取持仓失败: {str(e)}")
-                logger.error(f"获取持仓失败: {e}")
+                errors.append(f"获取测试网持仓失败: {str(e)}")
+                logger.error(f"获取测试网持仓失败: {e}")
             
-            # 获取未完成订单
+            # 获取未完成订单（测试网）
             try:
                 orders_result = await self.trader._make_request(
                     "private/get_open_orders_by_currency",
@@ -186,11 +206,12 @@ class SentimentTradingService:
                 if orders_result:
                     orders = orders_result
             except Exception as e:
-                errors.append(f"获取订单失败: {str(e)}")
-                logger.error(f"获取订单失败: {e}")
+                errors.append(f"获取测试网订单失败: {str(e)}")
+                logger.error(f"获取测试网订单失败: {e}")
             
             result = {
                 "timestamp": datetime.now().isoformat(),
+                "network": "testnet",
                 "positions": positions,
                 "open_orders": orders,
                 "errors": errors if errors else None,
@@ -249,17 +270,32 @@ class SentimentTradingService:
     async def run(self):
         """主运行循环"""
         logger.info("情绪驱动交易服务启动")
+        logger.info("配置: 测试网用于交易下单" + 
+                   (", 主网用于数据收集" if self.mainnet_trader else ", 测试网用于数据收集"))
         
-        # 连接到Deribit
+        # 连接到Deribit测试网（用于交易）
         try:
             authenticated = await self.trader.authenticate()
             if not authenticated:
-                logger.error("Deribit认证失败，服务无法启动")
+                logger.error("Deribit测试网认证失败，服务无法启动")
                 return
-            logger.info("Deribit认证成功")
+            logger.info("Deribit测试网认证成功")
         except Exception as e:
-            logger.error(f"连接Deribit失败: {e}")
+            logger.error(f"连接Deribit测试网失败: {e}")
             return
+        
+        # 如果配置了主网，也进行认证
+        if self.mainnet_trader:
+            try:
+                mainnet_auth = await self.mainnet_trader.authenticate()
+                if mainnet_auth:
+                    logger.info("Deribit主网认证成功")
+                else:
+                    logger.warning("Deribit主网认证失败，将使用测试网数据")
+                    self.mainnet_trader = None
+            except Exception as e:
+                logger.warning(f"连接Deribit主网失败: {e}，将使用测试网数据")
+                self.mainnet_trader = None
         
         while True:
             try:
