@@ -82,7 +82,7 @@ class DeribitConnectorAdapter:
         try:
             result = await self._make_public_request(
                 "get_instruments",
-                {"currency": currency, "kind": kind, "expired": False}
+                {"currency": currency, "kind": kind, "expired": "false"}
             )
             return result if result else []
         except Exception as e:
