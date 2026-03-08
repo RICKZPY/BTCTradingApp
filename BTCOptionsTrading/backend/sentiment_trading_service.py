@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.trading.deribit_trader import DeribitTrader
-from src.strategy.smart_strategy_builder import SmartStrategyBuilder, StrategyType
+from src.strategy.smart_strategy_builder import SmartStrategyBuilder, StrategyType, STRATEGY_TEMPLATES
 from src.trading.strategy_executor import StrategyExecutor
 from dotenv import load_dotenv
 
@@ -47,11 +47,27 @@ class DeribitConnectorAdapter:
     def __init__(self, trader: DeribitTrader):
         self.trader = trader
     
+    async def _make_public_request(self, method: str, params: Dict) -> Optional[Dict]:
+        """发送公共API请求"""
+        url = f"{self.trader.base_url}/public/{method}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    data = await resp.json()
+                    if 'result' in data:
+                        return data['result']
+                    else:
+                        logger.error(f"公共API请求失败: {data}")
+                        return None
+        except Exception as e:
+            logger.error(f"公共API请求异常: {e}")
+            return None
+    
     async def get_index_price(self, underlying: str) -> float:
         """获取指数价格"""
         try:
-            result = await self.trader._make_request(
-                "public/get_index_price",
+            result = await self._make_public_request(
+                "get_index_price",
                 {"index_name": f"{underlying.lower()}_usd"}
             )
             if result and 'index_price' in result:
@@ -64,8 +80,8 @@ class DeribitConnectorAdapter:
     async def get_instruments(self, currency: str, kind: str) -> List[Dict]:
         """获取期权合约列表"""
         try:
-            result = await self.trader._make_request(
-                "public/get_instruments",
+            result = await self._make_public_request(
+                "get_instruments",
                 {"currency": currency, "kind": kind, "expired": False}
             )
             return result if result else []
@@ -182,11 +198,17 @@ class SentimentTradingService:
         try:
             logger.info(f"开始执行策略: {strategy_type}")
             
+            # 获取策略模板
+            if strategy_type not in STRATEGY_TEMPLATES:
+                logger.error(f"未找到策略模板: {strategy_type}")
+                return {"success": False, "error": f"未找到策略模板: {strategy_type}"}
+            
+            template = STRATEGY_TEMPLATES[strategy_type]
+            
             # 构建策略
-            strategy = self.strategy_builder.build_from_template(
-                template_id=strategy_type,
-                capital=Decimal("1000"),  # 每次交易使用1000 USD
-                expiry_days=7  # 使用7天后到期的期权
+            strategy = await self.strategy_builder.build_strategy(
+                template=template,
+                underlying="BTC"
             )
             
             if not strategy:
@@ -225,7 +247,7 @@ class SentimentTradingService:
             # 获取持仓（测试网）
             try:
                 positions_result = await self.trader._make_request(
-                    "private/get_positions",
+                    "get_positions",
                     {"currency": "BTC", "kind": "option"}
                 )
                 if positions_result:
@@ -237,7 +259,7 @@ class SentimentTradingService:
             # 获取未完成订单（测试网）
             try:
                 orders_result = await self.trader._make_request(
-                    "private/get_open_orders_by_currency",
+                    "get_open_orders_by_currency",
                     {"currency": "BTC", "kind": "option"}
                 )
                 if orders_result:
