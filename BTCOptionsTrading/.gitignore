@@ -75,3 +75,8 @@ htmlcov/
 deploy/*.pem
 deploy/*.key
 deploy/secrets/
+
+# 旧文档和临时文件
+README_OLD.md
+*_OLD.md
+*_BACKUP.md
