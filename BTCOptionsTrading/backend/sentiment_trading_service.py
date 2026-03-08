@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.trading.deribit_trader import DeribitTrader
 from src.strategy.smart_strategy_builder import SmartStrategyBuilder, StrategyType
 from src.trading.strategy_executor import StrategyExecutor
+from src.connectors.deribit_connector import DeribitConnector
 from dotenv import load_dotenv
 
 # 配置日志
@@ -67,16 +68,23 @@ class SentimentTradingService:
         # 初始化交易器（测试网用于下单）
         self.trader = DeribitTrader(testnet_key, testnet_secret, testnet=True)
         
+        # 初始化连接器（用于策略构建）
+        self.connector = DeribitConnector(testnet_key, testnet_secret, testnet=True)
+        
         # 如果配置了主网密钥，初始化主网连接（用于数据收集）
         self.mainnet_trader = None
+        self.mainnet_connector = None
         if mainnet_key and mainnet_secret:
             self.mainnet_trader = DeribitTrader(mainnet_key, mainnet_secret, testnet=False)
+            self.mainnet_connector = DeribitConnector(mainnet_key, mainnet_secret, testnet=False)
             logger.info("已配置主网连接用于数据收集")
         else:
             logger.warning("未配置主网密钥，将使用测试网数据")
         
         self.executor = StrategyExecutor(self.trader)
-        self.strategy_builder = SmartStrategyBuilder()
+        # 使用主网连接器构建策略（如果有），否则使用测试网连接器
+        strategy_connector = self.mainnet_connector if self.mainnet_connector else self.connector
+        self.strategy_builder = SmartStrategyBuilder(strategy_connector)
         
         # 确保数据目录存在
         Path("data").mkdir(exist_ok=True)
@@ -280,6 +288,10 @@ class SentimentTradingService:
                 logger.error("Deribit测试网认证失败，服务无法启动")
                 return
             logger.info("Deribit测试网认证成功")
+            
+            # 初始化测试网连接器
+            await self.connector.connect()
+            logger.info("测试网连接器初始化成功")
         except Exception as e:
             logger.error(f"连接Deribit测试网失败: {e}")
             return
@@ -290,12 +302,17 @@ class SentimentTradingService:
                 mainnet_auth = await self.mainnet_trader.authenticate()
                 if mainnet_auth:
                     logger.info("Deribit主网认证成功")
+                    # 初始化主网连接器
+                    await self.mainnet_connector.connect()
+                    logger.info("主网连接器初始化成功")
                 else:
                     logger.warning("Deribit主网认证失败，将使用测试网数据")
                     self.mainnet_trader = None
+                    self.mainnet_connector = None
             except Exception as e:
                 logger.warning(f"连接Deribit主网失败: {e}，将使用测试网数据")
                 self.mainnet_trader = None
+                self.mainnet_connector = None
         
         while True:
             try:
