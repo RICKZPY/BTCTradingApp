@@ -59,7 +59,31 @@ curl http://47.86.62.200:5002/api/live/orders
    ```
 4. 在浏览器中打开 `sentiment_dashboard.html`
 
-### 方法4：使用Python脚本
+### 方法4：使用Python监控脚本（推荐）
+
+我们提供了一个完整的监控脚本 `monitor_api.py`：
+
+```bash
+# 持续监控（每30秒刷新）
+python3 BTCOptionsTrading/monitor_api.py
+
+# 只检查一次
+python3 BTCOptionsTrading/monitor_api.py --once
+
+# 自定义刷新间隔（每10秒）
+python3 BTCOptionsTrading/monitor_api.py --interval 10
+
+# 监控其他服务器
+python3 BTCOptionsTrading/monitor_api.py --url http://your-server:5002
+```
+
+这个脚本会显示：
+- 健康状态
+- 当前持仓
+- 未完成订单
+- 最近交易记录
+
+### 方法5：自定义Python脚本
 
 创建一个简单的Python脚本：
 
