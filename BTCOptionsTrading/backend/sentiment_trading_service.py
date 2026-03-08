@@ -88,6 +88,18 @@ class DeribitConnectorAdapter:
         except Exception as e:
             logger.error(f"获取合约列表失败: {e}")
             return []
+    
+    async def get_orderbook(self, instrument_name: str, depth: int = 5) -> Optional[Dict]:
+        """获取订单簿"""
+        try:
+            result = await self._make_public_request(
+                "get_order_book",
+                {"instrument_name": instrument_name, "depth": depth}
+            )
+            return result if result else None
+        except Exception as e:
+            logger.error(f"获取订单簿失败: {e}")
+            return None
 
 
 class SentimentTradingService:
