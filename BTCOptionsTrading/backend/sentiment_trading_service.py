@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.trading.deribit_trader import DeribitTrader
-from src.strategy.smart_strategy_builder import SmartStrategyBuilder, StrategyType, STRATEGY_TEMPLATES
+from src.strategy.smart_strategy_builder import SmartStrategyBuilder, StrategyType, PREDEFINED_TEMPLATES
 from src.trading.strategy_executor import StrategyExecutor
 from dotenv import load_dotenv
 
@@ -199,11 +199,11 @@ class SentimentTradingService:
             logger.info(f"开始执行策略: {strategy_type}")
             
             # 获取策略模板
-            if strategy_type not in STRATEGY_TEMPLATES:
+            if strategy_type not in PREDEFINED_TEMPLATES:
                 logger.error(f"未找到策略模板: {strategy_type}")
                 return {"success": False, "error": f"未找到策略模板: {strategy_type}"}
             
-            template = STRATEGY_TEMPLATES[strategy_type]
+            template = PREDEFINED_TEMPLATES[strategy_type]
             
             # 构建策略
             strategy = await self.strategy_builder.build_strategy(
