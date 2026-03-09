@@ -110,8 +110,25 @@ class DeribitTrader:
                     if 'result' in data:
                         return data['result']
                     else:
-                        logger.error(f"请求失败: {data}")
-                        return None
+                        # 检查是否是令牌过期错误
+                        if 'error' in data and data['error'].get('code') == 13009:
+                            logger.warning("访问令牌过期，尝试重新认证...")
+                            if await self.authenticate():
+                                # 重新认证成功，重试请求
+                                headers["Authorization"] = f"Bearer {self.access_token}"
+                                async with session.get(url, params=params, headers=headers) as retry_resp:
+                                    retry_data = await retry_resp.json()
+                                    if 'result' in retry_data:
+                                        return retry_data['result']
+                                    else:
+                                        logger.error(f"重试后仍然失败: {retry_data}")
+                                        return None
+                            else:
+                                logger.error("重新认证失败")
+                                return None
+                        else:
+                            logger.error(f"请求失败: {data}")
+                            return None
         except Exception as e:
             logger.error(f"请求异常: {e}")
             return None
