@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # 配置
 SENTIMENT_API_URL = "http://43.106.51.106:5001/api/sentiment"
-CHECK_TIME = time(5, 0)  # 每天早上5点检查
+CHECK_TIME = time(5, 0)  # 每天早上5点检查（由cron job调度，不再在代码中检查）
 DATA_FILE = "data/sentiment_trading_history.json"
 POSITION_FILE = "data/current_positions.json"
 
@@ -149,7 +149,6 @@ class SentimentTradingService:
         
         # 交易历史
         self.trading_history: List[Dict] = self._load_history()
-        self.last_check_date: Optional[str] = None
         
     def _load_history(self) -> List[Dict]:
         """加载交易历史"""
@@ -308,14 +307,7 @@ class SentimentTradingService:
     
     async def daily_check(self):
         """每日检查和交易"""
-        today = datetime.now().date().isoformat()
-        
-        # 避免重复执行
-        if self.last_check_date == today:
-            logger.info(f"今天已经执行过检查: {today}")
-            return
-        
-        logger.info(f"开始每日检查: {today}")
+        logger.info(f"开始每日检查")
         
         # 1. 获取情绪数据
         sentiment_data = await self.fetch_sentiment_data()
@@ -333,64 +325,68 @@ class SentimentTradingService:
         # 4. 更新持仓信息
         await self.get_positions_and_orders()
         
-        # 标记今天已检查
-        self.last_check_date = today
-        
         logger.info(f"每日检查完成: {result}")
     
-    async def run(self):
-        """主运行循环"""
-        logger.info("情绪驱动交易服务启动")
+    async def execute_once(self):
+        """单次执行模式 - 用于cron job调度"""
+        logger.info("情绪驱动交易服务启动（单次执行模式）")
         logger.info("配置: 测试网用于交易下单" + 
                    (", 主网用于数据收集" if self.mainnet_trader else ", 测试网用于数据收集"))
         
-        # 连接到Deribit测试网（用于交易）
         try:
-            authenticated = await self.trader.authenticate()
-            if not authenticated:
-                logger.error("Deribit测试网认证失败，服务无法启动")
+            # 连接到Deribit测试网（用于交易）
+            try:
+                authenticated = await self.trader.authenticate()
+                if not authenticated:
+                    logger.error("Deribit测试网认证失败，服务无法启动")
+                    return
+                logger.info("Deribit测试网认证成功")
+            except Exception as e:
+                logger.error(f"连接Deribit测试网失败: {e}")
                 return
-            logger.info("Deribit测试网认证成功")
-        except Exception as e:
-            logger.error(f"连接Deribit测试网失败: {e}")
-            return
-        
-        # 如果配置了主网，也进行认证
-        if self.mainnet_trader:
-            try:
-                mainnet_auth = await self.mainnet_trader.authenticate()
-                if mainnet_auth:
-                    logger.info("Deribit主网认证成功")
-                else:
-                    logger.warning("Deribit主网认证失败，将使用测试网数据")
+            
+            # 如果配置了主网，也进行认证
+            if self.mainnet_trader:
+                try:
+                    mainnet_auth = await self.mainnet_trader.authenticate()
+                    if mainnet_auth:
+                        logger.info("Deribit主网认证成功")
+                    else:
+                        logger.warning("Deribit主网认证失败，将使用测试网数据")
+                        self.mainnet_trader = None
+                except Exception as e:
+                    logger.warning(f"连接Deribit主网失败: {e}，将使用测试网数据")
                     self.mainnet_trader = None
-            except Exception as e:
-                logger.warning(f"连接Deribit主网失败: {e}，将使用测试网数据")
-                self.mainnet_trader = None
-        
-        while True:
+            
+            # 执行每日检查和交易
+            await self.daily_check()
+            
+            logger.info("情绪驱动交易服务执行完成")
+            
+        except Exception as e:
+            logger.error(f"执行过程中出错: {e}", exc_info=True)
+        finally:
+            # 确保连接被关闭
             try:
-                now = datetime.now()
-                current_time = now.time()
-                
-                # 检查是否到了执行时间（早上5点）
-                if current_time.hour == CHECK_TIME.hour and current_time.minute == CHECK_TIME.minute:
-                    await self.daily_check()
-                    # 等待60秒，避免在同一分钟内重复执行
-                    await asyncio.sleep(60)
-                else:
-                    # 每分钟检查一次
-                    await asyncio.sleep(60)
-                    
+                if hasattr(self.trader, 'close'):
+                    await self.trader.close()
+                if self.mainnet_trader and hasattr(self.mainnet_trader, 'close'):
+                    await self.mainnet_trader.close()
+                logger.info("连接已关闭，资源已释放")
             except Exception as e:
-                logger.error(f"运行循环出错: {e}", exc_info=True)
-                await asyncio.sleep(60)
+                logger.warning(f"关闭连接时出错: {e}")
+    
+    async def run(self):
+        """主运行循环（已弃用 - 保留用于向后兼容）"""
+        logger.warning("run()方法已弃用，请使用execute_once()进行单次执行")
+        logger.warning("如需持续运行，请使用cron job调度execute_once()")
+        await self.execute_once()
 
 
 async def main():
     """主函数"""
     service = SentimentTradingService()
-    await service.run()
+    await service.execute_once()
 
 
 if __name__ == "__main__":
