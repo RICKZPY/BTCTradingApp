@@ -46,6 +46,7 @@ class MobileFriendlyStatusAPI:
         self.news_tracker = NewsTracker()
         self.log_dir = Path(__file__).parent / "logs"
         self.db_path = Path(__file__).parent / "data" / "weighted_news_history.db"
+        self.pnl_file = Path(__file__).parent / "data" / "pnl_history.json"
     
     def setup_routes(self):
         """设置路由"""
@@ -169,6 +170,12 @@ class MobileFriendlyStatusAPI:
                         position['看涨合约'] = value
                     elif key == '看跌期权':
                         position['看跌合约'] = value
+                    elif key == '入场价(BTC)':
+                        # 区分看涨/看跌（看涨期权行在前）
+                        if '看涨合约' in position and '看跌合约' not in position:
+                            position['call_entry_btc'] = value
+                        else:
+                            position['put_entry_btc'] = value
                     elif key == '平均 IV':
                         position['平均IV'] = value
                     elif key == '总成本':
@@ -251,21 +258,42 @@ class MobileFriendlyStatusAPI:
             
             # 精简持仓信息
             simplified_positions = []
+            pnl_data = self._load_pnl()
             
             for pos in positions:
                 is_virtual = pos.get('虚拟交易', False)
+                trade_time = pos.get('交易时间', '未知')
+                call_inst = pos.get('看涨合约', '')
+                
+                # 查找 PnL（用 trade_time[:16] + call_instrument 匹配）
+                pnl_key = f"{trade_time[:16]}_{call_inst}"
+                pnl = pnl_data.get(pnl_key, {})
+                
+                if pnl:
+                    total_pnl = pnl.get('total_pnl_usd', 0)
+                    pnl_pct = pnl.get('pnl_pct', 0)
+                    pnl_sign = "+" if total_pnl >= 0 else ""
+                    pnl_str = f"{pnl_sign}{total_pnl:.2f} USD ({pnl_sign}{pnl_pct:.1f}%)"
+                    pnl_updated = pnl.get('updated_at', '')
+                else:
+                    pnl_str = "待更新（运行 pnl_updater.py）"
+                    pnl_updated = ""
+                
                 simplified = {
-                    "📅 时间": pos.get('交易时间', '未知')[:16],
+                    "📅 时间": trade_time[:16],
                     "🔮 类型": "虚拟交易（主网行情）" if is_virtual else "真实交易",
                     "📰 新闻": pos.get('新闻内容', '未知')[:100] + ('...' if len(pos.get('新闻内容', '')) > 100 else ''),
                     "😊 情绪": pos.get('情绪', '未知'),
                     "⭐ 评分": pos.get('评分', '未知'),
                     "💰 现货": pos.get('现货价格', '未知'),
                     "📊 IV": pos.get('平均IV', '未知'),
-                    "📈 看涨": self._simplify_instrument(pos.get('看涨合约', '未知')),
+                    "📈 看涨": self._simplify_instrument(call_inst),
                     "📉 看跌": self._simplify_instrument(pos.get('看跌合约', '未知')),
-                    "💵 成本": pos.get('总成本', '未知')
+                    "💵 成本": pos.get('总成本', '未知'),
+                    "📊 PnL": pnl_str,
                 }
+                if pnl_updated:
+                    simplified["🕐 PnL更新"] = pnl_updated
                 simplified_positions.append(simplified)
             
             response = {
@@ -287,6 +315,15 @@ class MobileFriendlyStatusAPI:
                 dumps=lambda obj: json.dumps(obj, ensure_ascii=False, indent=2)
             )
     
+    def _load_pnl(self) -> dict:
+        """加载 PnL 数据"""
+        if not self.pnl_file.exists():
+            return {}
+        try:
+            return json.loads(self.pnl_file.read_text(encoding='utf-8'))
+        except Exception:
+            return {}
+
     def _simplify_instrument(self, instrument_name: str) -> str:
         """简化合约名称显示
         

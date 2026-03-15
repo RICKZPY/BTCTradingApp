@@ -498,16 +498,21 @@ class SimplifiedTradeLogger:
             is_virtual = (
                 result.call_option and result.call_option.order_id == "VIRTUAL"
             )
+            # 主网入场价格（BTC单位，用于PnL计算）
+            call_entry_btc = result.call_option.premium
+            put_entry_btc = result.put_option.premium
             log_entry += (
                 f"虚拟交易: {'True' if is_virtual else 'False'}\n"
                 f"现货价格: ${result.spot_price:.2f}\n"
                 f"看涨期权: {result.call_option.instrument_name}\n"
                 f"  执行价: ${result.call_option.strike_price:.2f}\n"
+                f"  入场价(BTC): {call_entry_btc:.6f}\n"
                 f"  权利金: {result.call_option.premium:.4f} BTC\n"
                 f"  IV: {call_iv:.2f}%\n"
                 f"  订单 ID: {result.call_option.order_id}\n"
                 f"看跌期权: {result.put_option.instrument_name}\n"
                 f"  执行价: ${result.put_option.strike_price:.2f}\n"
+                f"  入场价(BTC): {put_entry_btc:.6f}\n"
                 f"  权利金: {result.put_option.premium:.4f} BTC\n"
                 f"  IV: {put_iv:.2f}%\n"
                 f"  订单 ID: {result.put_option.order_id}\n"
