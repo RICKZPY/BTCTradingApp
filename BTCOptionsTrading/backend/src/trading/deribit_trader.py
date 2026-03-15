@@ -163,7 +163,7 @@ class DeribitTrader:
         instrument_name: str,
         amount: float,
         price: Optional[float] = None,
-        order_type: str = "limit"
+        order_type: str = "market"
     ) -> Optional[Dict]:
         """
         买入期权
@@ -172,7 +172,7 @@ class DeribitTrader:
             instrument_name: 合约名称
             amount: 数量
             price: 限价（None为市价）
-            order_type: 订单类型 (limit/market)
+            order_type: 订单类型 (limit/market)，默认为market以确保快速成交
             
         Returns:
             订单信息
@@ -186,7 +186,7 @@ class DeribitTrader:
         if price and order_type == "limit":
             params["price"] = price
         
-        logger.info(f"买入订单: {instrument_name}, 数量: {amount}, 价格: {price}")
+        logger.info(f"买入订单: {instrument_name}, 数量: {amount}, 类型: {order_type}, 价格: {price}")
         return await self._make_request("buy", params)
     
     async def sell(
@@ -194,7 +194,7 @@ class DeribitTrader:
         instrument_name: str,
         amount: float,
         price: Optional[float] = None,
-        order_type: str = "limit"
+        order_type: str = "market"
     ) -> Optional[Dict]:
         """
         卖出期权
@@ -203,7 +203,7 @@ class DeribitTrader:
             instrument_name: 合约名称
             amount: 数量
             price: 限价（None为市价）
-            order_type: 订单类型 (limit/market)
+            order_type: 订单类型 (limit/market)，默认为market以确保快速成交
             
         Returns:
             订单信息
@@ -217,7 +217,7 @@ class DeribitTrader:
         if price and order_type == "limit":
             params["price"] = price
         
-        logger.info(f"卖出订单: {instrument_name}, 数量: {amount}, 价格: {price}")
+        logger.info(f"卖出订单: {instrument_name}, 数量: {amount}, 类型: {order_type}, 价格: {price}")
         return await self._make_request("sell", params)
     
     async def get_order_state(self, order_id: str) -> Optional[Dict]:

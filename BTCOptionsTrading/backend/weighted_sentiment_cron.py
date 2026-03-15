@@ -14,18 +14,35 @@ Cron 配置示例：
 """
 
 import asyncio
+import aiohttp
+import importlib.util
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
+from dotenv import load_dotenv
 
 # 添加当前目录到 Python 路径
 sys.path.insert(0, str(Path(__file__).parent))
 
+# 加载环境变量
+load_dotenv()
+
 from weighted_sentiment_api_client import NewsAPIClient
 from weighted_sentiment_news_tracker import NewsTracker
-from weighted_sentiment_models import WeightedNews, StraddleTradeResult
+from weighted_sentiment_models import WeightedNews, StraddleTradeResult, OptionTrade
+
+# 直接导入 DeribitTrader，避免触发包的 __init__.py
+import importlib.util
+spec = importlib.util.spec_from_file_location(
+    "deribit_trader",
+    Path(__file__).parent / "src" / "trading" / "deribit_trader.py"
+)
+deribit_trader_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(deribit_trader_module)
+DeribitTrader = deribit_trader_module.DeribitTrader
 
 
 # 配置日志
@@ -51,11 +68,10 @@ def setup_logging():
 logger = setup_logging()
 
 
-class SimplifiedStraddleExecutor:
-    """简化版跨式期权执行器
+class StraddleExecutor:
+    """跨式期权执行器 - 集成 Deribit 实际交易
     
-    注意：这是一个简化实现，用于演示工作流程。
-    实际交易功能需要完整的 Deribit 集成。
+    使用 DeribitTrader 在 Deribit Test 环境下单
     """
     
     def __init__(self):
@@ -64,14 +80,207 @@ class SimplifiedStraddleExecutor:
         self.api_secret = os.getenv('WEIGHTED_SENTIMENT_DERIBIT_API_SECRET')
         
         if not self.api_key or not self.api_secret:
-            logger.warning(
+            logger.error(
                 "未配置 Deribit 凭证。请设置环境变量：\n"
                 "  WEIGHTED_SENTIMENT_DERIBIT_API_KEY\n"
                 "  WEIGHTED_SENTIMENT_DERIBIT_API_SECRET"
             )
+            raise ValueError("缺少 Deribit API 凭证")
+        
+        # 初始化 DeribitTrader（测试网）
+        self.trader = DeribitTrader(self.api_key, self.api_secret, testnet=True)
+        self.authenticated = False
+    
+    async def authenticate(self) -> bool:
+        """认证 Deribit API
+        
+        Returns:
+            是否认证成功
+        """
+        if self.authenticated:
+            return True
+        
+        try:
+            success = await self.trader.authenticate()
+            if success:
+                self.authenticated = True
+                logger.info("Deribit 认证成功")
+            else:
+                logger.error("Deribit 认证失败")
+            return success
+        except Exception as e:
+            logger.error(f"Deribit 认证异常: {e}")
+            return False
+    
+    async def get_spot_price(self) -> float:
+        """获取 BTC 现货价格
+        
+        Returns:
+            BTC 现货价格（USD）
+        """
+        try:
+            url = f"{self.trader.base_url}/public/get_index_price"
+            params = {"index_name": "btc_usd"}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    data = await resp.json()
+                    if 'result' in data and 'index_price' in data['result']:
+                        price = data['result']['index_price']
+                        logger.info(f"获取 BTC 现货价格: ${price:.2f}")
+                        return price
+                    else:
+                        logger.error(f"获取现货价格失败: {data}")
+                        return 0.0
+        except Exception as e:
+            logger.error(f"获取现货价格异常: {e}")
+            return 0.0
+    
+    async def find_atm_options(self, spot_price: float) -> tuple[Optional[str], Optional[str]]:
+        """查找 ATM（平值）期权合约
+        
+        Args:
+            spot_price: 当前现货价格
+        
+        Returns:
+            (call_instrument, put_instrument) 元组
+        """
+        try:
+            # 获取期权合约列表
+            url = f"{self.trader.base_url}/public/get_instruments"
+            params = {"currency": "BTC", "kind": "option", "expired": "false"}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    data = await resp.json()
+                    if 'result' not in data:
+                        logger.error(f"获取合约列表失败: {data}")
+                        return None, None
+                    
+                    instruments = data['result']
+                    logger.info(f"获取到 {len(instruments)} 个期权合约")
+                    
+                    # 找到最接近现货价格的执行价格
+                    # 筛选出最近到期的合约（通常流动性更好）
+                    from datetime import datetime, timedelta
+                    
+                    # 只考虑未来 7-30 天到期的合约
+                    now = datetime.now()
+                    min_expiry = now + timedelta(days=7)
+                    max_expiry = now + timedelta(days=30)
+                    
+                    call_options = []
+                    put_options = []
+                    
+                    for inst in instruments:
+                        try:
+                            # 解析到期时间
+                            expiry_str = inst.get('expiration_timestamp')
+                            if not expiry_str:
+                                continue
+                            
+                            expiry_dt = datetime.fromtimestamp(expiry_str / 1000)
+                            
+                            # 过滤到期时间
+                            if not (min_expiry <= expiry_dt <= max_expiry):
+                                continue
+                            
+                            strike = inst.get('strike')
+                            option_type = inst.get('option_type')
+                            instrument_name = inst.get('instrument_name')
+                            
+                            if not all([strike, option_type, instrument_name]):
+                                continue
+                            
+                            # 计算与现货价格的差距
+                            price_diff = abs(strike - spot_price)
+                            
+                            if option_type == 'call':
+                                call_options.append((instrument_name, strike, price_diff, expiry_dt))
+                            elif option_type == 'put':
+                                put_options.append((instrument_name, strike, price_diff, expiry_dt))
+                        
+                        except Exception as e:
+                            logger.debug(f"解析合约失败: {e}")
+                            continue
+                    
+                    if not call_options or not put_options:
+                        logger.error("未找到合适的期权合约")
+                        return None, None
+                    
+                    # 按价格差距排序，选择最接近的
+                    call_options.sort(key=lambda x: x[2])
+                    put_options.sort(key=lambda x: x[2])
+                    
+                    call_instrument = call_options[0][0]
+                    put_instrument = put_options[0][0]
+                    
+                    logger.info(f"选择 ATM 期权:")
+                    logger.info(f"  看涨: {call_instrument} (执行价: {call_options[0][1]})")
+                    logger.info(f"  看跌: {put_instrument} (执行价: {put_options[0][1]})")
+                    
+                    return call_instrument, put_instrument
+        
+        except Exception as e:
+            logger.error(f"查找 ATM 期权异常: {e}")
+            return None, None
+    
+    async def get_option_price(self, instrument_name: str) -> float:
+        """获取期权价格（使用 mark price）
+        
+        Args:
+            instrument_name: 合约名称
+        
+        Returns:
+            期权价格
+        """
+        try:
+            url = f"{self.trader.base_url}/public/ticker"
+            params = {"instrument_name": instrument_name}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    data = await resp.json()
+                    if 'result' in data and 'mark_price' in data['result']:
+                        price = data['result']['mark_price']
+                        logger.info(f"{instrument_name} 价格: {price}")
+                        return price
+                    else:
+                        logger.error(f"获取期权价格失败: {data}")
+                        return 0.0
+        except Exception as e:
+            logger.error(f"获取期权价格异常: {e}")
+            return 0.0
+    
+    async def get_option_iv(self, instrument_name: str) -> float:
+        """获取期权隐含波动率（IV）
+        
+        Args:
+            instrument_name: 合约名称
+        
+        Returns:
+            隐含波动率（百分比）
+        """
+        try:
+            url = f"{self.trader.base_url}/public/ticker"
+            params = {"instrument_name": instrument_name}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    data = await resp.json()
+                    if 'result' in data and 'mark_iv' in data['result']:
+                        iv = data['result']['mark_iv']
+                        logger.info(f"{instrument_name} IV: {iv:.2f}%")
+                        return iv
+                    else:
+                        logger.warning(f"获取 IV 失败: {data}")
+                        return 0.0
+        except Exception as e:
+            logger.error(f"获取 IV 异常: {e}")
+            return 0.0
     
     async def execute_straddle(self, news: WeightedNews) -> StraddleTradeResult:
-        """执行跨式期权交易（简化版）
+        """执行跨式期权交易
         
         Args:
             news: 触发交易的新闻
@@ -79,12 +288,171 @@ class SimplifiedStraddleExecutor:
         Returns:
             交易结果
         """
-        logger.info(f"模拟执行跨式交易，触发新闻: {news.news_id}")
+        logger.info(f"执行跨式交易，触发新闻: {news.news_id}")
+        logger.info(f"  内容: {news.content[:80]}...")
+        logger.info(f"  情绪: {news.sentiment}")
+        logger.info(f"  评分: {news.importance_score}/10")
         
-        # 简化实现：记录交易意图但不实际执行
-        # 在生产环境中，这里应该调用 Deribit API
+        try:
+            # 1. 认证
+            if not await self.authenticate():
+                return StraddleTradeResult(
+                    success=False,
+                    news_id=news.news_id,
+                    trade_time=datetime.now(),
+                    spot_price=0.0,
+                    call_option=None,
+                    put_option=None,
+                    total_cost=0.0,
+                    error_message="Deribit 认证失败"
+                )
+            
+            # 2. 获取现货价格
+            spot_price = await self.get_spot_price()
+            if spot_price <= 0:
+                return StraddleTradeResult(
+                    success=False,
+                    news_id=news.news_id,
+                    trade_time=datetime.now(),
+                    spot_price=0.0,
+                    call_option=None,
+                    put_option=None,
+                    total_cost=0.0,
+                    error_message="无法获取现货价格"
+                )
+            
+            # 3. 查找 ATM 期权
+            call_instrument, put_instrument = await self.find_atm_options(spot_price)
+            if not call_instrument or not put_instrument:
+                return StraddleTradeResult(
+                    success=False,
+                    news_id=news.news_id,
+                    trade_time=datetime.now(),
+                    spot_price=spot_price,
+                    call_option=None,
+                    put_option=None,
+                    total_cost=0.0,
+                    error_message="未找到合适的 ATM 期权"
+                )
+            
+            # 4. 获取期权价格和IV
+            call_price = await self.get_option_price(call_instrument)
+            put_price = await self.get_option_price(put_instrument)
+            call_iv = await self.get_option_iv(call_instrument)
+            put_iv = await self.get_option_iv(put_instrument)
+            
+            if call_price <= 0 or put_price <= 0:
+                return StraddleTradeResult(
+                    success=False,
+                    news_id=news.news_id,
+                    trade_time=datetime.now(),
+                    spot_price=spot_price,
+                    call_option=None,
+                    put_option=None,
+                    total_cost=0.0,
+                    error_message="无法获取期权价格"
+                )
+            
+            # 5. 下单买入（使用市价单，数量为 0.1 BTC）
+            trade_amount = 0.1
+            
+            logger.info(f"下单买入看涨期权: {call_instrument}, 数量: {trade_amount}")
+            call_order = await self.trader.buy(
+                instrument_name=call_instrument,
+                amount=trade_amount,
+                order_type="market"
+            )
+            
+            if not call_order:
+                return StraddleTradeResult(
+                    success=False,
+                    news_id=news.news_id,
+                    trade_time=datetime.now(),
+                    spot_price=spot_price,
+                    call_option=None,
+                    put_option=None,
+                    total_cost=0.0,
+                    error_message="看涨期权下单失败"
+                )
+            
+            logger.info(f"下单买入看跌期权: {put_instrument}, 数量: {trade_amount}")
+            put_order = await self.trader.buy(
+                instrument_name=put_instrument,
+                amount=trade_amount,
+                order_type="market"
+            )
+            
+            if not put_order:
+                return StraddleTradeResult(
+                    success=False,
+                    news_id=news.news_id,
+                    trade_time=datetime.now(),
+                    spot_price=spot_price,
+                    call_option=None,
+                    put_option=None,
+                    total_cost=0.0,
+                    error_message="看跌期权下单失败"
+                )
+            
+            # 6. 构建交易结果
+            # 解析合约信息
+            import re
+            
+            # 解析看涨期权
+            call_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-C', call_instrument)
+            call_expiry_str = call_match.group(1) if call_match else "UNKNOWN"
+            call_strike = float(call_match.group(2)) if call_match else spot_price
+            
+            # 解析看跌期权
+            put_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-P', put_instrument)
+            put_expiry_str = put_match.group(1) if put_match else "UNKNOWN"
+            put_strike = float(put_match.group(2)) if put_match else spot_price
+            
+            # 简化：使用当前时间 + 14 天作为到期日
+            expiry_date = datetime.now() + timedelta(days=14)
+            
+            call_option = OptionTrade(
+                instrument_name=call_instrument,
+                option_type="call",
+                strike_price=call_strike,
+                expiry_date=expiry_date,
+                premium=call_price,
+                quantity=trade_amount,
+                order_id=call_order.get('order', {}).get('order_id')
+            )
+            
+            put_option = OptionTrade(
+                instrument_name=put_instrument,
+                option_type="put",
+                strike_price=put_strike,
+                expiry_date=expiry_date,
+                premium=put_price,
+                quantity=trade_amount,
+                order_id=put_order.get('order', {}).get('order_id')
+            )
+            
+            total_cost = (call_price + put_price) * trade_amount * spot_price
+            avg_iv = (call_iv + put_iv) / 2
+            
+            logger.info(f"✓ 跨式交易执行成功")
+            logger.info(f"  看涨订单 ID: {call_option.order_id}")
+            logger.info(f"  看跌订单 ID: {put_option.order_id}")
+            logger.info(f"  平均 IV: {avg_iv:.2f}%")
+            logger.info(f"  总成本: ${total_cost:.2f}")
+            
+            return StraddleTradeResult(
+                success=True,
+                news_id=news.news_id,
+                trade_time=datetime.now(),
+                spot_price=spot_price,
+                call_option=call_option,
+                put_option=put_option,
+                total_cost=total_cost,
+                error_message=None
+            )
         
-        if not self.api_key or not self.api_secret:
+        except Exception as e:
+            logger.error(f"执行跨式交易异常: {e}", exc_info=True)
             return StraddleTradeResult(
                 success=False,
                 news_id=news.news_id,
@@ -93,27 +461,8 @@ class SimplifiedStraddleExecutor:
                 call_option=None,
                 put_option=None,
                 total_cost=0.0,
-                error_message="未配置 Deribit 凭证"
+                error_message=f"交易异常: {str(e)}"
             )
-        
-        # 模拟成功的交易
-        logger.info(
-            f"[模拟] 为新闻 {news.news_id} 执行跨式交易\n"
-            f"  内容: {news.content[:60]}...\n"
-            f"  情绪: {news.sentiment}\n"
-            f"  评分: {news.importance_score}/10"
-        )
-        
-        return StraddleTradeResult(
-            success=False,
-            news_id=news.news_id,
-            trade_time=datetime.now(),
-            spot_price=0.0,
-            call_option=None,
-            put_option=None,
-            total_cost=0.0,
-            error_message="简化实现 - 未实际执行交易"
-        )
 
 
 class SimplifiedTradeLogger:
@@ -129,12 +478,14 @@ class SimplifiedTradeLogger:
         self.log_dir.mkdir(exist_ok=True)
         self.trade_log_file = self.log_dir / "weighted_sentiment_trades.log"
     
-    async def log_trade(self, news: WeightedNews, result: StraddleTradeResult):
+    async def log_trade(self, news: WeightedNews, result: StraddleTradeResult, call_iv: float = 0.0, put_iv: float = 0.0):
         """记录交易
         
         Args:
             news: 触发交易的新闻
             result: 交易结果
+            call_iv: 看涨期权IV
+            put_iv: 看跌期权IV
         """
         log_entry = (
             f"\n{'='*80}\n"
@@ -147,8 +498,20 @@ class SimplifiedTradeLogger:
         )
         
         if result.success:
+            avg_iv = (call_iv + put_iv) / 2 if call_iv > 0 and put_iv > 0 else 0.0
             log_entry += (
                 f"现货价格: ${result.spot_price:.2f}\n"
+                f"看涨期权: {result.call_option.instrument_name}\n"
+                f"  执行价: ${result.call_option.strike_price:.2f}\n"
+                f"  权利金: {result.call_option.premium:.4f} BTC\n"
+                f"  IV: {call_iv:.2f}%\n"
+                f"  订单 ID: {result.call_option.order_id}\n"
+                f"看跌期权: {result.put_option.instrument_name}\n"
+                f"  执行价: ${result.put_option.strike_price:.2f}\n"
+                f"  权利金: {result.put_option.premium:.4f} BTC\n"
+                f"  IV: {put_iv:.2f}%\n"
+                f"  订单 ID: {result.put_option.order_id}\n"
+                f"平均 IV: {avg_iv:.2f}%\n"
                 f"总成本: ${result.total_cost:.2f}\n"
             )
         else:
@@ -175,7 +538,7 @@ async def main():
         logger.info("初始化组件...")
         api_client = NewsAPIClient()
         news_tracker = NewsTracker()
-        executor = SimplifiedStraddleExecutor()
+        executor = StraddleExecutor()
         trade_logger = SimplifiedTradeLogger()
         
         # 2. 获取新闻数据
@@ -209,8 +572,16 @@ async def main():
                 # 执行跨式交易
                 result = await executor.execute_straddle(news)
                 
-                # 记录交易
-                await trade_logger.log_trade(news, result)
+                # 获取IV数据（从日志中提取或重新获取）
+                call_iv = 0.0
+                put_iv = 0.0
+                if result.success and result.call_option and result.put_option:
+                    # 重新获取IV
+                    call_iv = await executor.get_option_iv(result.call_option.instrument_name)
+                    put_iv = await executor.get_option_iv(result.put_option.instrument_name)
+                
+                # 记录交易（包含IV）
+                await trade_logger.log_trade(news, result, call_iv, put_iv)
                 
                 if result.success:
                     logger.info(f"  ✓ 交易成功")
