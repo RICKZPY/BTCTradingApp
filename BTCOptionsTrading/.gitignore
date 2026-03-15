@@ -76,7 +76,9 @@ deploy/*.pem
 deploy/*.key
 deploy/secrets/
 
-# 旧文档和临时文件
-README_OLD.md
-*_OLD.md
-*_BACKUP.md
+# vol_strategy 运行时数据（不提交）
+backend/vol_strategy/data/
+backend/vol_strategy/logs/
+
+# 本地 venv（根目录）
+venv/

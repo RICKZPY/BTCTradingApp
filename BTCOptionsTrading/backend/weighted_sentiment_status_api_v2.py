@@ -113,7 +113,8 @@ class MobileFriendlyStatusAPI:
         """
         return web.Response(
             text=html,
-            content_type='text/html; charset=utf-8'
+            content_type='text/html',
+            charset='utf-8'
         )
     
     def _parse_trade_log(self) -> List[Dict]:
@@ -574,7 +575,8 @@ class MobileFriendlyStatusAPI:
         """
         return web.Response(
             text=html,
-            content_type='text/html; charset=utf-8'
+            content_type='text/html',
+            charset='utf-8'
         )
     
     def run(self):

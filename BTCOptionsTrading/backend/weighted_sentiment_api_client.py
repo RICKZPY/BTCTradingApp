@@ -93,6 +93,23 @@ class NewsAPIClient:
                         logger.error(f"JSON 解析失败: {e}")
                         return []
                     
+                    # 处理不同的响应格式
+                    # 如果响应是字典，尝试提取 'data' 或 'news' 字段
+                    if isinstance(data, dict):
+                        if 'data' in data:
+                            data = data['data']
+                            logger.info(f"从响应字典中提取 'data' 字段")
+                            # 如果 data 还是字典，继续提取 'news' 字段
+                            if isinstance(data, dict) and 'news' in data:
+                                data = data['news']
+                                logger.info(f"从 data 字典中提取 'news' 字段")
+                        elif 'news' in data:
+                            data = data['news']
+                            logger.info(f"从响应字典中提取 'news' 字段")
+                        else:
+                            logger.error(f"API 响应是字典但不包含 'data' 或 'news' 字段: {list(data.keys())}")
+                            return []
+                    
                     # 验证响应数据格式
                     if not isinstance(data, list):
                         logger.error(f"API 响应格式错误：期望列表，实际类型: {type(data)}")
@@ -146,23 +163,58 @@ class NewsAPIClient:
             ValueError: 如果数据验证失败
             TypeError: 如果数据类型不正确
         """
-        # 验证必需字段存在
-        required_fields = ['news_id', 'content', 'sentiment', 'importance_score', 'timestamp']
-        for field in required_fields:
-            if field not in item:
-                raise KeyError(f"缺少必需字段: {field}")
+        # API 字段映射
+        # API 使用 'guid' 作为唯一标识，'title' 作为内容，'published_at' 作为时间戳
+        news_id = item.get('guid') or item.get('news_id')
+        content = item.get('title') or item.get('content')
+        sentiment_raw = item.get('sentiment')
+        importance_score = item.get('importance_score')
+        timestamp_value = item.get('published_at') or item.get('pubDate') or item.get('timestamp')
+        source = item.get('source')
+        
+        # 验证必需字段
+        if not news_id:
+            raise KeyError("缺少必需字段: guid 或 news_id")
+        if not content:
+            raise KeyError("缺少必需字段: title 或 content")
+        if not sentiment_raw:
+            raise KeyError("缺少必需字段: sentiment")
+        if importance_score is None:
+            raise KeyError("缺少必需字段: importance_score")
+        if not timestamp_value:
+            raise KeyError("缺少必需字段: published_at, pubDate 或 timestamp")
+        
+        # 情绪值映射：中文 -> 英文
+        sentiment_mapping = {
+            '积极': 'positive',
+            '正面': 'positive',
+            '负面': 'negative',
+            '消极': 'negative',
+            '中立': 'neutral',
+            '未知': 'neutral',  # 将未知映射为中立
+            # 英文值直接通过
+            'positive': 'positive',
+            'negative': 'negative',
+            'neutral': 'neutral'
+        }
+        
+        sentiment = sentiment_mapping.get(str(sentiment_raw).strip())
+        if not sentiment:
+            # 如果映射失败，记录警告并使用中立
+            logger.warning(f"未知的情绪值: {sentiment_raw}，使用 'neutral' 作为默认值")
+            sentiment = 'neutral'
         
         # 解析时间戳
-        timestamp = self._parse_timestamp(item['timestamp'])
+        timestamp = self._parse_timestamp(timestamp_value)
         
         # 创建 WeightedNews 对象（会自动触发验证）
         news = WeightedNews(
-            news_id=str(item['news_id']),
-            content=str(item['content']),
-            sentiment=str(item['sentiment']),
-            importance_score=int(item['importance_score']),
+            news_id=str(news_id),
+            content=str(content),
+            sentiment=sentiment,
+            importance_score=int(importance_score),
             timestamp=timestamp,
-            source=item.get('source')  # 可选字段
+            source=source  # 可选字段
         )
         
         return news
