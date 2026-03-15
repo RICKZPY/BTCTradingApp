@@ -161,6 +161,8 @@ class MobileFriendlyStatusAPI:
                         position['情绪'] = value
                     elif key == '重要性评分':
                         position['评分'] = value
+                    elif key == '虚拟交易':
+                        position['虚拟交易'] = value == 'True'
                     elif key == '现货价格':
                         position['现货价格'] = value
                     elif key == '看涨期权':
@@ -170,8 +172,7 @@ class MobileFriendlyStatusAPI:
                     elif key == '平均 IV':
                         position['平均IV'] = value
                     elif key == '总成本':
-                        position['总成本'] = value
-                
+                        position['总成本'] = value                
                 if position and '新闻内容' in position:
                     positions.append(position)
             
@@ -252,8 +253,10 @@ class MobileFriendlyStatusAPI:
             simplified_positions = []
             
             for pos in positions:
+                is_virtual = pos.get('虚拟交易', False)
                 simplified = {
-                    "📅 时间": pos.get('交易时间', '未知')[:16],  # 只显示到分钟
+                    "📅 时间": pos.get('交易时间', '未知')[:16],
+                    "🔮 类型": "虚拟交易（主网行情）" if is_virtual else "真实交易",
                     "📰 新闻": pos.get('新闻内容', '未知')[:100] + ('...' if len(pos.get('新闻内容', '')) > 100 else ''),
                     "😊 情绪": pos.get('情绪', '未知'),
                     "⭐ 评分": pos.get('评分', '未知'),
@@ -320,7 +323,8 @@ class MobileFriendlyStatusAPI:
                             "时间": pos.get('交易时间', '未知'),
                             "IV": iv_value,
                             "成本": pos.get('总成本', '未知'),
-                            "新闻": pos.get('新闻内容', '未知')[:50] + '...'
+                            "新闻": pos.get('新闻内容', '未知')[:50] + '...',
+                            "虚拟": pos.get('虚拟交易', False)
                         })
                     except:
                         pass
@@ -486,6 +490,12 @@ class MobileFriendlyStatusAPI:
                         document.getElementById('max-iv').textContent = maxIV.toFixed(1) + '%';
                         document.getElementById('min-iv').textContent = minIV.toFixed(1) + '%';
                         
+                        // 区分真实/虚拟交易点颜色
+                        const pointColors = data.数据.map(item => 
+                            item.虚拟 ? 'rgba(150,150,150,0.8)' : 'rgba(0,122,255,0.9)'
+                        );
+                        const pointRadii = data.数据.map(item => item.虚拟 ? 4 : 5);
+                        
                         // 创建图表
                         const ctx = document.getElementById('ivChart').getContext('2d');
                         new Chart(ctx, {
@@ -497,6 +507,8 @@ class MobileFriendlyStatusAPI:
                                     data: ivValues,
                                     borderColor: '#007AFF',
                                     backgroundColor: 'rgba(0, 122, 255, 0.1)',
+                                    pointBackgroundColor: pointColors,
+                                    pointRadius: pointRadii,
                                     tension: 0.4,
                                     fill: true,
                                     yAxisID: 'y'
@@ -526,7 +538,9 @@ class MobileFriendlyStatusAPI:
                                         callbacks: {
                                             afterLabel: function(context) {
                                                 const index = context.dataIndex;
-                                                return '新闻: ' + data.数据[index].新闻;
+                                                const item = data.数据[index];
+                                                const tag = item.虚拟 ? ' 🔮虚拟' : ' ✅真实';
+                                                return tag + ' | 新闻: ' + item.新闻;
                                             }
                                         }
                                     }

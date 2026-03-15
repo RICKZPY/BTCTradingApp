@@ -312,7 +312,7 @@ class StraddleExecutor:
                     error_message="未找到合适的 ATM 期权"
                 )
             
-            # 4. 获取期权价格和IV
+            # 4. 获取期权价格和IV（主网真实数据，无论下单是否成功都会记录）
             call_price = await self.get_option_price(call_instrument)
             put_price = await self.get_option_price(put_instrument)
             call_iv = await self.get_option_iv(call_instrument)
@@ -330,8 +330,16 @@ class StraddleExecutor:
                     error_message="无法获取期权价格"
                 )
             
-            # 5. 下单买入（使用市价单，数量为 0.1 BTC）
+            # 5. 解析合约信息 + 下单（使用市价单，数量为 0.1 BTC）
             trade_amount = 0.1
+            import re
+            call_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-C', call_instrument)
+            call_strike = float(call_match.group(2)) if call_match else spot_price
+            put_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-P', put_instrument)
+            put_strike = float(put_match.group(2)) if put_match else spot_price
+            expiry_date = datetime.now() + timedelta(days=14)
+            total_cost = (call_price + put_price) * trade_amount * spot_price
+            avg_iv = (call_iv + put_iv) / 2
             
             logger.info(f"下单买入看涨期权: {call_instrument}, 数量: {trade_amount}")
             call_order = await self.trader.buy(
@@ -341,15 +349,12 @@ class StraddleExecutor:
             )
             
             if not call_order:
-                return StraddleTradeResult(
-                    success=False,
-                    news_id=news.news_id,
-                    trade_time=datetime.now(),
-                    spot_price=spot_price,
-                    call_option=None,
-                    put_option=None,
-                    total_cost=0.0,
-                    error_message="看涨期权下单失败"
+                logger.warning(f"看涨期权下单失败，记录为虚拟交易")
+                return self._build_virtual_result(
+                    news, spot_price, call_instrument, put_instrument,
+                    call_price, put_price, call_strike, put_strike,
+                    expiry_date, trade_amount, total_cost, call_iv, put_iv,
+                    "看涨期权下单失败（测试网不可用）"
                 )
             
             logger.info(f"下单买入看跌期权: {put_instrument}, 数量: {trade_amount}")
@@ -360,34 +365,15 @@ class StraddleExecutor:
             )
             
             if not put_order:
-                return StraddleTradeResult(
-                    success=False,
-                    news_id=news.news_id,
-                    trade_time=datetime.now(),
-                    spot_price=spot_price,
-                    call_option=None,
-                    put_option=None,
-                    total_cost=0.0,
-                    error_message="看跌期权下单失败"
+                logger.warning(f"看跌期权下单失败，记录为虚拟交易")
+                return self._build_virtual_result(
+                    news, spot_price, call_instrument, put_instrument,
+                    call_price, put_price, call_strike, put_strike,
+                    expiry_date, trade_amount, total_cost, call_iv, put_iv,
+                    "看跌期权下单失败（测试网不可用）"
                 )
             
-            # 6. 构建交易结果
-            # 解析合约信息
-            import re
-            
-            # 解析看涨期权
-            call_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-C', call_instrument)
-            call_expiry_str = call_match.group(1) if call_match else "UNKNOWN"
-            call_strike = float(call_match.group(2)) if call_match else spot_price
-            
-            # 解析看跌期权
-            put_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-P', put_instrument)
-            put_expiry_str = put_match.group(1) if put_match else "UNKNOWN"
-            put_strike = float(put_match.group(2)) if put_match else spot_price
-            
-            # 简化：使用当前时间 + 14 天作为到期日
-            expiry_date = datetime.now() + timedelta(days=14)
-            
+            # 6. 构建真实交易结果（复用已解析的数据）
             call_option = OptionTrade(
                 instrument_name=call_instrument,
                 option_type="call",
@@ -407,9 +393,6 @@ class StraddleExecutor:
                 quantity=trade_amount,
                 order_id=put_order.get('order', {}).get('order_id')
             )
-            
-            total_cost = (call_price + put_price) * trade_amount * spot_price
-            avg_iv = (call_iv + put_iv) / 2
             
             logger.info(f"✓ 跨式交易执行成功")
             logger.info(f"  看涨订单 ID: {call_option.order_id}")
@@ -440,6 +423,42 @@ class StraddleExecutor:
                 total_cost=0.0,
                 error_message=f"交易异常: {str(e)}"
             )
+    def _build_virtual_result(
+        self, news, spot_price, call_instrument, put_instrument,
+        call_price, put_price, call_strike, put_strike,
+        expiry_date, trade_amount, total_cost, call_iv, put_iv, reason
+    ) -> StraddleTradeResult:
+        """构建虚拟交易结果（测试网不可用时，用主网行情数据模拟）"""
+        call_option = OptionTrade(
+            instrument_name=call_instrument,
+            option_type="call",
+            strike_price=call_strike,
+            expiry_date=expiry_date,
+            premium=call_price,
+            quantity=trade_amount,
+            order_id="VIRTUAL"
+        )
+        put_option = OptionTrade(
+            instrument_name=put_instrument,
+            option_type="put",
+            strike_price=put_strike,
+            expiry_date=expiry_date,
+            premium=put_price,
+            quantity=trade_amount,
+            order_id="VIRTUAL"
+        )
+        avg_iv = (call_iv + put_iv) / 2
+        logger.info(f"✓ 虚拟交易记录（主网行情）: IV={avg_iv:.2f}%, 成本=${total_cost:.2f}, 原因: {reason}")
+        return StraddleTradeResult(
+            success=True,
+            news_id=news.news_id,
+            trade_time=datetime.now(),
+            spot_price=spot_price,
+            call_option=call_option,
+            put_option=put_option,
+            total_cost=total_cost,
+            error_message=None
+        )
 
 
 class SimplifiedTradeLogger:
@@ -476,7 +495,11 @@ class SimplifiedTradeLogger:
         
         if result.success:
             avg_iv = (call_iv + put_iv) / 2 if call_iv > 0 and put_iv > 0 else 0.0
+            is_virtual = (
+                result.call_option and result.call_option.order_id == "VIRTUAL"
+            )
             log_entry += (
+                f"虚拟交易: {'True' if is_virtual else 'False'}\n"
                 f"现货价格: ${result.spot_price:.2f}\n"
                 f"看涨期权: {result.call_option.instrument_name}\n"
                 f"  执行价: ${result.call_option.strike_price:.2f}\n"
