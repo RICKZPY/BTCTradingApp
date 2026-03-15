@@ -21,6 +21,8 @@ from typing import List, Dict, Optional
 
 from weighted_sentiment_news_tracker import NewsTracker
 
+BASE_DIR = Path(__file__).parent
+
 
 # 配置日志
 logging.basicConfig(
@@ -54,7 +56,9 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/api/status', self.handle_status)
         self.app.router.add_get('/api/positions', self.handle_positions)
         self.app.router.add_get('/api/iv-history', self.handle_iv_history)
+        self.app.router.add_get('/api/iv-detail', self.handle_iv_detail)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
+        self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
         self.app.router.add_get('/', self.handle_root)
     
     async def handle_root(self, request):
@@ -106,8 +110,14 @@ class MobileFriendlyStatusAPI:
                 
                 <div class="endpoint">
                     <h3>📊 IV 历史图表</h3>
-                    <p>查看隐含波动率历史变化趋势</p>
+                    <p>查看隐含波动率历史变化趋势（含 DVOL 市场背景）</p>
                     <p><a href="/iv-chart">查看图表 →</a></p>
+                </div>
+                
+                <div class="endpoint">
+                    <h3>🔬 合约 IV 5分钟走势</h3>
+                    <p>查看持仓合约的精细 IV 变化（每5分钟采集）</p>
+                    <p><a href="/iv-detail-chart">查看走势 →</a></p>
                 </div>
             </div>
         </body>
@@ -424,7 +434,261 @@ class MobileFriendlyStatusAPI:
                 status=500,
                 dumps=lambda obj: json.dumps(obj, ensure_ascii=False, indent=2)
             )
-    
+
+    async def handle_iv_detail(self, request):
+        """返回某个合约的 5 分钟 IV 时间序列"""
+        instrument = request.rel_url.query.get('instrument', '')
+        limit = int(request.rel_url.query.get('limit', 2016))  # 默认最近 7 天
+
+        if not instrument:
+            # 无参数时返回所有有数据的合约列表
+            try:
+                db_path = BASE_DIR / "data" / "iv_history.db"
+                if not db_path.exists():
+                    return web.json_response({"合约列表": [], "消息": "暂无数据"},
+                        dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+                conn = sqlite3.connect(db_path)
+                rows = conn.execute(
+                    "SELECT instrument, COUNT(*) as cnt, MAX(ts) as last_ts "
+                    "FROM iv_snapshots GROUP BY instrument ORDER BY instrument"
+                ).fetchall()
+                conn.close()
+                return web.json_response(
+                    {"合约列表": [{"合约": r[0], "数据点数": r[1],
+                                  "最新时间": datetime.utcfromtimestamp(r[2]).strftime("%Y-%m-%d %H:%M UTC")}
+                                 for r in rows]},
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2)
+                )
+            except Exception as e:
+                return web.json_response({"错误": str(e)}, status=500,
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+
+        try:
+            db_path = BASE_DIR / "data" / "iv_history.db"
+            if not db_path.exists():
+                return web.json_response({"数据": [], "消息": "暂无采集数据，请先运行 iv_collector.py"},
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+
+            conn = sqlite3.connect(db_path)
+            rows = conn.execute(
+                "SELECT ts, mark_iv, mark_price, spot_price FROM iv_snapshots "
+                "WHERE instrument=? ORDER BY ts DESC LIMIT ?",
+                (instrument, limit)
+            ).fetchall()
+            conn.close()
+
+            data = [{"ts": r[0], "iv": r[1], "price_btc": r[2], "spot": r[3]} for r in reversed(rows)]
+            return web.json_response(
+                {"合约": instrument, "数据": data, "数量": len(data)},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2)
+            )
+        except Exception as e:
+            return web.json_response({"错误": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+
+    async def handle_iv_detail_chart(self, request):
+        """5分钟 IV 走势图页面"""
+        # 先获取所有有数据的合约列表，用于下拉选择
+        db_path = BASE_DIR / "data" / "iv_history.db"
+        instruments_json = "[]"
+        if db_path.exists():
+            try:
+                conn = sqlite3.connect(db_path)
+                rows = conn.execute(
+                    "SELECT instrument FROM iv_snapshots GROUP BY instrument ORDER BY instrument"
+                ).fetchall()
+                conn.close()
+                import json as _json
+                instruments_json = _json.dumps([r[0] for r in rows])
+            except Exception:
+                pass
+
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>合约 IV 5分钟走势</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;padding:20px;background:#f5f5f5}}
+.container{{max-width:1200px;margin:0 auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}}
+h1{{color:#333;font-size:22px;margin-bottom:16px}}
+.controls{{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;align-items:center}}
+select,button{{padding:8px 14px;border-radius:6px;border:1px solid #ddd;font-size:14px}}
+button{{background:#007AFF;color:white;border:none;cursor:pointer}}
+button:hover{{background:#0056CC}}
+.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}}
+.stat-card{{background:#f8f9fa;padding:10px;border-radius:8px;border-left:4px solid #007AFF}}
+.stat-card.green{{border-left-color:#34C759}}.stat-card.red{{border-left-color:#FF3B30}}
+.stat-label{{font-size:11px;color:#666;margin-bottom:3px}}
+.stat-value{{font-size:20px;font-weight:bold;color:#333}}
+.chart-container{{position:relative;height:400px;margin-bottom:20px}}
+.chart-container2{{position:relative;height:250px}}
+.back-link{{display:inline-block;margin-bottom:16px;color:#007AFF;text-decoration:none}}
+.loading{{text-align:center;padding:30px;color:#888}}
+.no-data{{text-align:center;padding:40px;color:#aaa;font-size:14px}}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="/" class="back-link">← 返回首页</a>
+<h1>🔬 合约 IV 5分钟走势</h1>
+
+<div class="controls">
+  <select id="instrument-select">
+    <option value="">-- 选择合约 --</option>
+  </select>
+  <select id="range-select">
+    <option value="288">最近 24 小时</option>
+    <option value="2016" selected>最近 7 天</option>
+    <option value="8640">最近 30 天</option>
+  </select>
+  <button onclick="loadData()">加载</button>
+  <span id="last-update" style="font-size:12px;color:#888"></span>
+</div>
+
+<div class="stats" id="stats" style="display:none">
+  <div class="stat-card"><div class="stat-label">当前 IV</div><div class="stat-value" id="s-current">--</div></div>
+  <div class="stat-card green"><div class="stat-label">最低 IV</div><div class="stat-value" id="s-min">--</div></div>
+  <div class="stat-card red"><div class="stat-label">最高 IV</div><div class="stat-value" id="s-max">--</div></div>
+  <div class="stat-card"><div class="stat-label">平均 IV</div><div class="stat-value" id="s-avg">--</div></div>
+  <div class="stat-card"><div class="stat-label">IV 变化</div><div class="stat-value" id="s-change">--</div></div>
+</div>
+
+<div class="chart-container"><canvas id="ivChart"></canvas></div>
+<div class="chart-container2"><canvas id="priceChart"></canvas></div>
+<div id="loading" class="loading" style="display:none">加载中...</div>
+<div id="no-data" class="no-data">请选择合约后点击加载</div>
+</div>
+
+<script>
+const INSTRUMENTS = {instruments_json};
+let ivChartInst = null, priceChartInst = null;
+
+// 填充下拉列表
+const sel = document.getElementById('instrument-select');
+INSTRUMENTS.forEach(inst => {{
+  const opt = document.createElement('option');
+  opt.value = inst; opt.textContent = inst;
+  sel.appendChild(opt);
+}});
+
+async function loadData() {{
+  const inst = document.getElementById('instrument-select').value;
+  const limit = document.getElementById('range-select').value;
+  if (!inst) {{ alert('请先选择合约'); return; }}
+
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('no-data').style.display = 'none';
+  document.getElementById('stats').style.display = 'none';
+
+  try {{
+    const r = await fetch(`/api/iv-detail?instrument=${{encodeURIComponent(inst)}}&limit=${{limit}}`);
+    const data = await r.json();
+
+    document.getElementById('loading').style.display = 'none';
+
+    if (!data.数据 || data.数据.length === 0) {{
+      document.getElementById('no-data').textContent = '该合约暂无 IV 数据（采集器尚未运行或合约不在持仓中）';
+      document.getElementById('no-data').style.display = 'block';
+      return;
+    }}
+
+    const pts = data.数据;
+    const ivVals = pts.map(p => p.iv);
+    const priceVals = pts.map(p => p.spot);
+
+    // 统计
+    const cur = ivVals[ivVals.length-1];
+    const first = ivVals[0];
+    const mn = Math.min(...ivVals), mx = Math.max(...ivVals);
+    const avg = ivVals.reduce((a,b)=>a+b,0)/ivVals.length;
+    const chg = cur - first;
+    document.getElementById('s-current').textContent = cur.toFixed(1)+'%';
+    document.getElementById('s-min').textContent = mn.toFixed(1)+'%';
+    document.getElementById('s-max').textContent = mx.toFixed(1)+'%';
+    document.getElementById('s-avg').textContent = avg.toFixed(1)+'%';
+    document.getElementById('s-change').textContent = (chg>=0?'+':'')+chg.toFixed(1)+'%';
+    document.getElementById('s-change').style.color = chg>=0?'#FF3B30':'#34C759';
+    document.getElementById('stats').style.display = 'grid';
+    document.getElementById('last-update').textContent =
+      '最新: ' + new Date(pts[pts.length-1].ts*1000).toLocaleString('zh-CN');
+
+    const ivDataset = pts.map(p=>({{x:p.ts*1000, y:p.iv}}));
+    const priceDataset = pts.map(p=>({{x:p.ts*1000, y:p.spot}}));
+
+    // IV 图表
+    if (ivChartInst) ivChartInst.destroy();
+    const ctx1 = document.getElementById('ivChart').getContext('2d');
+    ivChartInst = new Chart(ctx1, {{
+      type: 'line',
+      data: {{ datasets: [{{
+        label: inst + ' IV (%)',
+        data: ivDataset,
+        borderColor: '#007AFF',
+        backgroundColor: 'rgba(0,122,255,0.08)',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        tension: 0.2,
+        fill: true
+      }}] }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
+        interaction: {{ mode: 'index', intersect: false }},
+        plugins: {{ legend: {{ display: true, position: 'top' }} }},
+        scales: {{
+          x: {{ type: 'time', time: {{ tooltipFormat: 'MM-dd HH:mm', displayFormats: {{ hour: 'MM-dd HH:mm', day: 'MM-dd' }} }} }},
+          y: {{ title: {{ display: true, text: 'IV (%)' }} }}
+        }}
+      }}
+    }});
+
+    // 现货价格图表
+    if (priceChartInst) priceChartInst.destroy();
+    const ctx2 = document.getElementById('priceChart').getContext('2d');
+    priceChartInst = new Chart(ctx2, {{
+      type: 'line',
+      data: {{ datasets: [{{
+        label: 'BTC 现货价格 ($)',
+        data: priceDataset,
+        borderColor: '#FF9500',
+        backgroundColor: 'rgba(255,149,0,0.06)',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.2,
+        fill: true
+      }}] }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
+        interaction: {{ mode: 'index', intersect: false }},
+        plugins: {{ legend: {{ display: true, position: 'top' }} }},
+        scales: {{
+          x: {{ type: 'time', time: {{ tooltipFormat: 'MM-dd HH:mm', displayFormats: {{ hour: 'MM-dd HH:mm', day: 'MM-dd' }} }} }},
+          y: {{ title: {{ display: true, text: 'BTC ($)' }} }}
+        }}
+      }}
+    }});
+
+  }} catch(e) {{
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('no-data').textContent = '加载失败: ' + e.message;
+    document.getElementById('no-data').style.display = 'block';
+  }}
+}}
+
+// 如果 URL 带了 instrument 参数，自动加载
+const urlInst = new URLSearchParams(location.search).get('instrument');
+if (urlInst) {{
+  document.getElementById('instrument-select').value = urlInst;
+  loadData();
+}}
+</script>
+</body>
+</html>"""
+        return web.Response(text=html, content_type='text/html', charset='utf-8')
 
     async def handle_iv_chart(self, request):
         """处理IV图表页面请求，含 DVOL 市场背景曲线"""
