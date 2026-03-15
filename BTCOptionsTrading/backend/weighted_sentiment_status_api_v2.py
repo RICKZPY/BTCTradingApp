@@ -10,10 +10,11 @@ Mobile-friendly status API for weighted sentiment trading
 """
 
 import asyncio
+import aiohttp
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from aiohttp import web
 from typing import List, Dict, Optional
@@ -344,12 +345,39 @@ class MobileFriendlyStatusAPI:
         
         return instrument_name
     
+    async def _fetch_dvol_history(self, start_ts: int, end_ts: int) -> list:
+        """从 Deribit 主网拉取 BTC-DVOL 历史数据（小时级别）"""
+        try:
+            url = "https://www.deribit.com/api/v2/public/get_volatility_index_data"
+            params = {
+                "currency": "BTC",
+                "start_timestamp": start_ts,
+                "end_timestamp": end_ts,
+                "resolution": "3600"  # 1小时
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    data = await resp.json()
+                    if 'result' in data and 'data' in data['result']:
+                        # 每条: [timestamp_ms, open, high, low, close]
+                        # DVOL 直接是百分比形式（53.06 = 53.06%），无需换算
+                        return [
+                            {
+                                "ts": row[0],
+                                "dvol": round(row[4], 2)  # close值，已是百分比
+                            }
+                            for row in data['result']['data']
+                        ]
+        except Exception as e:
+            logger.warning(f"获取 DVOL 历史数据失败: {e}")
+        return []
+
     async def handle_iv_history(self, request):
-        """处理IV历史数据查询请求"""
+        """处理IV历史数据查询请求，附加 DVOL 市场背景数据"""
         try:
             positions = self._parse_trade_log()
-            
-            # 提取IV历史数据
+
+            # 提取交易 IV 历史
             iv_history = []
             for pos in positions:
                 iv_str = pos.get('平均IV', '未知')
@@ -363,17 +391,32 @@ class MobileFriendlyStatusAPI:
                             "新闻": pos.get('新闻内容', '未知')[:50] + '...',
                             "虚拟": pos.get('虚拟交易', False)
                         })
-                    except:
+                    except Exception:
                         pass
-            
+
+            # 计算 DVOL 查询时间范围（覆盖所有交易时间，前后各扩展 24 小时）
+            dvol_data = []
+            if iv_history:
+                try:
+                    times = [datetime.fromisoformat(p['时间']) for p in iv_history]
+                    start_dt = min(times)
+                    end_dt = max(times)
+                    # 前后各扩展 24 小时，让 DVOL 曲线有上下文
+                    start_ts = int((start_dt.timestamp() - 86400) * 1000)
+                    end_ts = int((end_dt.timestamp() + 86400) * 1000)
+                    dvol_data = await self._fetch_dvol_history(start_ts, end_ts)
+                except Exception as e:
+                    logger.warning(f"计算 DVOL 时间范围失败: {e}")
+
             return web.json_response(
                 {
                     "数据": iv_history,
-                    "数量": len(iv_history)
+                    "数量": len(iv_history),
+                    "DVOL": dvol_data
                 },
                 dumps=lambda obj: json.dumps(obj, ensure_ascii=False, indent=2)
             )
-        
+
         except Exception as e:
             logger.error(f"处理IV历史查询时发生错误: {e}")
             return web.json_response(
@@ -382,254 +425,97 @@ class MobileFriendlyStatusAPI:
                 dumps=lambda obj: json.dumps(obj, ensure_ascii=False, indent=2)
             )
     
+
     async def handle_iv_chart(self, request):
-        """处理IV图表页面请求"""
-        html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>IV 历史图表</title>
-            <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-            <style>
-                body { 
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-                    margin: 0;
-                    padding: 20px;
-                    background: #f5f5f5;
-                }
-                .container { 
-                    max-width: 1200px; 
-                    margin: 0 auto;
-                    background: white;
-                    padding: 20px;
-                    border-radius: 10px;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                }
-                h1 { 
-                    color: #333; 
-                    font-size: 24px;
-                    margin-bottom: 20px;
-                }
-                .chart-container {
-                    position: relative;
-                    height: 400px;
-                    margin-bottom: 30px;
-                }
-                .stats {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                    gap: 15px;
-                    margin-bottom: 20px;
-                }
-                .stat-card {
-                    background: #f8f9fa;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border-left: 4px solid #007AFF;
-                }
-                .stat-label {
-                    font-size: 12px;
-                    color: #666;
-                    margin-bottom: 5px;
-                }
-                .stat-value {
-                    font-size: 24px;
-                    font-weight: bold;
-                    color: #333;
-                }
-                .loading {
-                    text-align: center;
-                    padding: 40px;
-                    color: #666;
-                }
-                .back-link {
-                    display: inline-block;
-                    margin-bottom: 20px;
-                    color: #007AFF;
-                    text-decoration: none;
-                }
-                .back-link:hover {
-                    text-decoration: underline;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <a href="/" class="back-link">← 返回首页</a>
-                <h1>📊 隐含波动率（IV）历史趋势</h1>
-                
-                <div class="stats" id="stats">
-                    <div class="stat-card">
-                        <div class="stat-label">当前 IV</div>
-                        <div class="stat-value" id="current-iv">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">平均 IV</div>
-                        <div class="stat-value" id="avg-iv">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">最高 IV</div>
-                        <div class="stat-value" id="max-iv">--</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">最低 IV</div>
-                        <div class="stat-value" id="min-iv">--</div>
-                    </div>
-                </div>
-                
-                <div class="chart-container">
-                    <canvas id="ivChart"></canvas>
-                </div>
-                
-                <div id="loading" class="loading">加载中...</div>
-            </div>
-            
-            <script>
-                async function loadIVData() {
-                    try {
-                        const response = await fetch('/api/iv-history');
-                        const data = await response.json();
-                        
-                        if (!data.数据 || data.数据.length === 0) {
-                            document.getElementById('loading').innerHTML = 
-                                '暂无 IV 数据。<br>下次交易执行后将显示 IV 历史。';
-                            return;
-                        }
-                        
-                        document.getElementById('loading').style.display = 'none';
-                        
-                        // 提取数据
-                        const labels = data.数据.map(item => {
-                            const date = new Date(item.时间);
-                            return date.toLocaleString('zh-CN', {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                            });
-                        });
-                        const ivValues = data.数据.map(item => item.IV);
-                        const costs = data.数据.map(item => {
-                            const cost = item.成本.replace('$', '').replace(',', '');
-                            return parseFloat(cost);
-                        });
-                        
-                        // 计算统计数据
-                        const currentIV = ivValues[ivValues.length - 1];
-                        const avgIV = ivValues.reduce((a, b) => a + b, 0) / ivValues.length;
-                        const maxIV = Math.max(...ivValues);
-                        const minIV = Math.min(...ivValues);
-                        
-                        document.getElementById('current-iv').textContent = currentIV.toFixed(1) + '%';
-                        document.getElementById('avg-iv').textContent = avgIV.toFixed(1) + '%';
-                        document.getElementById('max-iv').textContent = maxIV.toFixed(1) + '%';
-                        document.getElementById('min-iv').textContent = minIV.toFixed(1) + '%';
-                        
-                        // 区分真实/虚拟交易点颜色
-                        const pointColors = data.数据.map(item => 
-                            item.虚拟 ? 'rgba(150,150,150,0.8)' : 'rgba(0,122,255,0.9)'
-                        );
-                        const pointRadii = data.数据.map(item => item.虚拟 ? 4 : 5);
-                        
-                        // 创建图表
-                        const ctx = document.getElementById('ivChart').getContext('2d');
-                        new Chart(ctx, {
-                            type: 'line',
-                            data: {
-                                labels: labels,
-                                datasets: [{
-                                    label: 'IV (%)',
-                                    data: ivValues,
-                                    borderColor: '#007AFF',
-                                    backgroundColor: 'rgba(0, 122, 255, 0.1)',
-                                    pointBackgroundColor: pointColors,
-                                    pointRadius: pointRadii,
-                                    tension: 0.4,
-                                    fill: true,
-                                    yAxisID: 'y'
-                                }, {
-                                    label: '成本 ($)',
-                                    data: costs,
-                                    borderColor: '#FF3B30',
-                                    backgroundColor: 'rgba(255, 59, 48, 0.1)',
-                                    tension: 0.4,
-                                    fill: true,
-                                    yAxisID: 'y1'
-                                }]
-                            },
-                            options: {
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                interaction: {
-                                    mode: 'index',
-                                    intersect: false,
-                                },
-                                plugins: {
-                                    legend: {
-                                        display: true,
-                                        position: 'top',
-                                    },
-                                    tooltip: {
-                                        callbacks: {
-                                            afterLabel: function(context) {
-                                                const index = context.dataIndex;
-                                                const item = data.数据[index];
-                                                const tag = item.虚拟 ? ' 🔮虚拟' : ' ✅真实';
-                                                return tag + ' | 新闻: ' + item.新闻;
-                                            }
-                                        }
-                                    }
-                                },
-                                scales: {
-                                    y: {
-                                        type: 'linear',
-                                        display: true,
-                                        position: 'left',
-                                        title: {
-                                            display: true,
-                                            text: 'IV (%)'
-                                        }
-                                    },
-                                    y1: {
-                                        type: 'linear',
-                                        display: true,
-                                        position: 'right',
-                                        title: {
-                                            display: true,
-                                            text: '成本 ($)'
-                                        },
-                                        grid: {
-                                            drawOnChartArea: false,
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                        
-                    } catch (error) {
-                        console.error('加载数据失败:', error);
-                        document.getElementById('loading').innerHTML = 
-                            '加载失败: ' + error.message;
-                    }
-                }
-                
-                // 页面加载时获取数据
-                loadIVData();
-                
-                // 每30秒刷新一次
-                setInterval(loadIVData, 30000);
-            </script>
-        </body>
-        </html>
-        """
-        return web.Response(
-            text=html,
-            content_type='text/html',
-            charset='utf-8'
+        """处理IV图表页面请求，含 DVOL 市场背景曲线"""
+        html = (
+            "<!DOCTYPE html>\n"
+            "<html>\n"
+            "<head>\n"
+            "<meta charset=\"UTF-8\">\n"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+            "<title>IV 历史图表</title>\n"
+            "<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js\"></script>\n"
+            "<script src=\"https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js\"></script>\n"
+            "<style>\n"
+            "body{font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Arial,sans-serif;margin:0;padding:20px;background:#f5f5f5}\n"
+            ".container{max-width:1200px;margin:0 auto;background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}\n"
+            "h1{color:#333;font-size:24px;margin-bottom:20px}\n"
+            ".chart-container{position:relative;height:460px;margin-bottom:30px}\n"
+            ".stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}\n"
+            ".stat-card{background:#f8f9fa;padding:12px;border-radius:8px;border-left:4px solid #007AFF}\n"
+            ".stat-card.dvol{border-left-color:#34C759}\n"
+            ".stat-label{font-size:11px;color:#666;margin-bottom:4px}\n"
+            ".stat-value{font-size:22px;font-weight:bold;color:#333}\n"
+            ".legend-note{font-size:12px;color:#888;margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap}\n"
+            ".dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle}\n"
+            ".loading{text-align:center;padding:40px;color:#666}\n"
+            ".back-link{display:inline-block;margin-bottom:20px;color:#007AFF;text-decoration:none}\n"
+            "</style>\n"
+            "</head>\n"
+            "<body>\n"
+            "<div class=\"container\">\n"
+            "<a href=\"/\" class=\"back-link\">← 返回首页</a>\n"
+            "<h1>📊 隐含波动率（IV）历史趋势</h1>\n"
+            "<div class=\"stats\">\n"
+            "  <div class=\"stat-card\"><div class=\"stat-label\">最新交易 IV</div><div class=\"stat-value\" id=\"current-iv\">--</div></div>\n"
+            "  <div class=\"stat-card\"><div class=\"stat-label\">平均交易 IV</div><div class=\"stat-value\" id=\"avg-iv\">--</div></div>\n"
+            "  <div class=\"stat-card\"><div class=\"stat-label\">最高交易 IV</div><div class=\"stat-value\" id=\"max-iv\">--</div></div>\n"
+            "  <div class=\"stat-card\"><div class=\"stat-label\">最低交易 IV</div><div class=\"stat-value\" id=\"min-iv\">--</div></div>\n"
+            "  <div class=\"stat-card dvol\"><div class=\"stat-label\">当前 DVOL（市场）</div><div class=\"stat-value\" id=\"current-dvol\">--</div></div>\n"
+            "</div>\n"
+            "<div class=\"legend-note\">\n"
+            "  <span><span class=\"dot\" style=\"background:#007AFF\"></span>交易 IV（蓝=真实，灰=虚拟）</span>\n"
+            "  <span><span class=\"dot\" style=\"background:#34C759\"></span>BTC-DVOL 市场整体 30日IV</span>\n"
+            "  <span><span class=\"dot\" style=\"background:#FF3B30\"></span>交易成本</span>\n"
+            "</div>\n"
+            "<div class=\"chart-container\"><canvas id=\"ivChart\"></canvas></div>\n"
+            "<div id=\"loading\" class=\"loading\">加载中...</div>\n"
+            "</div>\n"
+            "<script>\n"
+            "async function loadIVData(){\n"
+            "  try{\n"
+            "    const r=await fetch('/api/iv-history');\n"
+            "    const data=await r.json();\n"
+            "    const hasT=data.数据&&data.数据.length>0;\n"
+            "    const hasD=data.DVOL&&data.DVOL.length>0;\n"
+            "    if(!hasT&&!hasD){document.getElementById('loading').innerHTML='暂无数据';return;}\n"
+            "    document.getElementById('loading').style.display='none';\n"
+            "    const tradePoints=hasT?data.数据.map(item=>({x:new Date(item.时间).getTime(),y:item.IV,v:item.虚拟,n:item.新闻,c:item.成本})):[];\n"
+            "    const ptColors=tradePoints.map(p=>p.v?'rgba(150,150,150,0.85)':\'rgba(0,122,255,0.9)\');\n"
+            "    const ptRadii=tradePoints.map(p=>p.v?5:7);\n"
+            "    const dvolPoints=hasD?data.DVOL.map(d=>({x:d.ts,y:d.dvol})):[];\n"
+            "    const costPoints=hasT?data.数据.map(item=>({x:new Date(item.时间).getTime(),y:parseFloat(item.成本.replace('$','').replace(',',''))||null})):[];\n"
+            "    if(hasT){\n"
+            "      const iv=tradePoints.map(p=>p.y);\n"
+            "      document.getElementById('current-iv').textContent=iv[iv.length-1].toFixed(1)+'%';\n"
+            "      document.getElementById('avg-iv').textContent=(iv.reduce((a,b)=>a+b,0)/iv.length).toFixed(1)+'%';\n"
+            "      document.getElementById('max-iv').textContent=Math.max(...iv).toFixed(1)+'%';\n"
+            "      document.getElementById('min-iv').textContent=Math.min(...iv).toFixed(1)+'%';\n"
+            "    }\n"
+            "    if(hasD){document.getElementById('current-dvol').textContent=dvolPoints[dvolPoints.length-1].y.toFixed(1)+'%';}\n"
+            "    const ctx=document.getElementById('ivChart').getContext('2d');\n"
+            "    new Chart(ctx,{type:'line',data:{datasets:[\n"
+            "      {label:'BTC-DVOL 市场IV(%)',data:dvolPoints,borderColor:'#34C759',backgroundColor:'rgba(52,199,89,0.06)',borderWidth:1.5,pointRadius:0,tension:0.3,fill:false,yAxisID:'y',order:3},\n"
+            "      {label:'交易 IV(%)',data:tradePoints,borderColor:'rgba(0,122,255,0.4)',borderWidth:1,borderDash:[4,4],pointBackgroundColor:ptColors,pointRadius:ptRadii,pointHoverRadius:9,showLine:true,tension:0,fill:false,yAxisID:'y',order:1},\n"
+            "      {label:'交易成本($)',data:costPoints,borderColor:'#FF3B30',backgroundColor:'rgba(255,59,48,0.08)',borderWidth:1.5,pointRadius:4,tension:0.3,fill:true,yAxisID:'y1',order:2}\n"
+            "    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},\n"
+            "    plugins:{legend:{display:true,position:'top'},tooltip:{callbacks:{afterBody:function(items){\n"
+            "      const ti=items.find(i=>i.dataset.label==='交易 IV(%)');\n"
+            "      if(ti){const p=tradePoints[ti.dataIndex];if(p)return[(p.v?'🔮 虚拟':\'✅ 真实\')+' | '+p.n];}\n"
+            "      return[];\n"
+            "    }}}},\n"
+            "    scales:{x:{type:'time',time:{tooltipFormat:'MM-dd HH:mm',displayFormats:{hour:'MM-dd HH:mm',day:'MM-dd'}}},\n"
+            "    y:{type:'linear',position:'left',title:{display:true,text:'IV(%)'}},\n"
+            "    y1:{type:'linear',position:'right',title:{display:true,text:'成本($)'},grid:{drawOnChartArea:false}}}\n"
+            "    }});\n"
+            "  }catch(e){console.error(e);document.getElementById('loading').innerHTML='加载失败: '+e.message;}\n"
+            "}\n"
+            "loadIVData();setInterval(loadIVData,60000);\n"
+            "</script></body></html>"
         )
-    
+        return web.Response(text=html, content_type='text/html', charset='utf-8')
+
     def run(self):
         """运行 API 服务器"""
         logger.info(f"启动移动端友好状态 API，端口: {self.port}")
