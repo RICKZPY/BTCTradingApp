@@ -87,9 +87,12 @@ class StraddleExecutor:
             )
             raise ValueError("缺少 Deribit API 凭证")
         
-        # 初始化 DeribitTrader（测试网）
+        # 初始化 DeribitTrader（测试网，仅用于下单）
         self.trader = DeribitTrader(self.api_key, self.api_secret, testnet=True)
         self.authenticated = False
+        
+        # 主网公开API（无需认证，用于获取真实行情和IV）
+        self.mainnet_url = "https://www.deribit.com/api/v2"
     
     async def authenticate(self) -> bool:
         """认证 Deribit API
@@ -113,13 +116,9 @@ class StraddleExecutor:
             return False
     
     async def get_spot_price(self) -> float:
-        """获取 BTC 现货价格
-        
-        Returns:
-            BTC 现货价格（USD）
-        """
+        """获取 BTC 现货价格（主网真实数据）"""
         try:
-            url = f"{self.trader.base_url}/public/get_index_price"
+            url = f"{self.mainnet_url}/public/get_index_price"
             params = {"index_name": "btc_usd"}
             
             async with aiohttp.ClientSession() as session:
@@ -137,17 +136,9 @@ class StraddleExecutor:
             return 0.0
     
     async def find_atm_options(self, spot_price: float) -> tuple[Optional[str], Optional[str]]:
-        """查找 ATM（平值）期权合约
-        
-        Args:
-            spot_price: 当前现货价格
-        
-        Returns:
-            (call_instrument, put_instrument) 元组
-        """
+        """查找 ATM（平值）期权合约（主网真实数据）"""
         try:
-            # 获取期权合约列表
-            url = f"{self.trader.base_url}/public/get_instruments"
+            url = f"{self.mainnet_url}/public/get_instruments"
             params = {"currency": "BTC", "kind": "option", "expired": "false"}
             
             async with aiohttp.ClientSession() as session:
@@ -226,16 +217,9 @@ class StraddleExecutor:
             return None, None
     
     async def get_option_price(self, instrument_name: str) -> float:
-        """获取期权价格（使用 mark price）
-        
-        Args:
-            instrument_name: 合约名称
-        
-        Returns:
-            期权价格
-        """
+        """获取期权价格（主网真实数据）"""
         try:
-            url = f"{self.trader.base_url}/public/ticker"
+            url = f"{self.mainnet_url}/public/ticker"
             params = {"instrument_name": instrument_name}
             
             async with aiohttp.ClientSession() as session:
@@ -253,16 +237,9 @@ class StraddleExecutor:
             return 0.0
     
     async def get_option_iv(self, instrument_name: str) -> float:
-        """获取期权隐含波动率（IV）
-        
-        Args:
-            instrument_name: 合约名称
-        
-        Returns:
-            隐含波动率（百分比）
-        """
+        """获取期权隐含波动率（主网真实数据）"""
         try:
-            url = f"{self.trader.base_url}/public/ticker"
+            url = f"{self.mainnet_url}/public/ticker"
             params = {"instrument_name": instrument_name}
             
             async with aiohttp.ClientSession() as session:
