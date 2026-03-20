@@ -90,6 +90,12 @@ def parse_trade_log():
     except Exception as e:
         logger.error(f"解析交易日志失败: {e}")
 
+    # 只保留 23MAR26 及以后的合约
+    EXCLUDED = ('27MAR26', '20MAR26')
+    positions = [
+        p for p in positions
+        if not any(ex in p.get('call_instrument', '') for ex in EXCLUDED)
+    ]
     return positions
 
 

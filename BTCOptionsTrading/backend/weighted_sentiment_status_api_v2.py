@@ -194,8 +194,13 @@ class MobileFriendlyStatusAPI:
                         position['总成本'] = value                
                 if position and '新闻内容' in position:
                     positions.append(position)
-            
-            # 返回全部记录
+
+            # 只保留 23MAR26 及以后的合约（过滤掉已清理的早期持仓）
+            EXCLUDED = ('27MAR26', '20MAR26')
+            positions = [
+                p for p in positions
+                if not any(ex in p.get('看涨合约', '') for ex in EXCLUDED)
+            ]
             return positions
         
         except Exception as e:
