@@ -55,6 +55,7 @@ class MobileFriendlyStatusAPI:
         """设置路由"""
         self.app.router.add_get('/api/status', self.handle_status)
         self.app.router.add_get('/api/positions', self.handle_positions)
+        self.app.router.add_get('/positions', self.handle_positions_html)
         self.app.router.add_get('/api/iv-history', self.handle_iv_history)
         self.app.router.add_get('/api/iv-detail', self.handle_iv_detail)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
@@ -105,7 +106,7 @@ class MobileFriendlyStatusAPI:
                 <div class="endpoint">
                     <h3>💼 持仓信息</h3>
                     <p>查看当前持仓及关联的新闻</p>
-                    <p><a href="/api/positions">查看持仓 →</a></p>
+                    <p><a href="/positions">📱 卡片页面 →</a> &nbsp; <a href="/api/positions">JSON →</a></p>
                 </div>
                 
                 <div class="endpoint">
@@ -326,6 +327,144 @@ class MobileFriendlyStatusAPI:
                 dumps=lambda obj: json.dumps(obj, ensure_ascii=False, indent=2)
             )
     
+    def _build_card_html(self, pos: dict, pnl_data: dict) -> str:
+        """构建单个持仓卡片 HTML"""
+        is_virtual = pos.get('虚拟交易', False)
+        trade_time = pos.get('交易时间', '未知')
+        call_inst = pos.get('看涨合约', '')
+        news_text = pos.get('新闻内容', '未知')
+        sentiment = pos.get('情绪', '未知')
+        score = pos.get('评分', '未知')
+        spot = pos.get('现货价格', '未知')
+        avg_iv = pos.get('平均IV', '未知')
+        total_cost = pos.get('总成本', '未知')
+        call_simple = self._simplify_instrument(call_inst)
+        put_simple = self._simplify_instrument(pos.get('看跌合约', '未知'))
+
+        pnl_key = f"{trade_time[:16]}_{call_inst}"
+        pnl = pnl_data.get(pnl_key, {})
+        if pnl:
+            total_pnl = pnl.get('total_pnl_usd', 0)
+            pnl_pct = pnl.get('pnl_pct', 0)
+            sign = "+" if total_pnl >= 0 else ""
+            pnl_color = "#34C759" if total_pnl >= 0 else "#FF3B30"
+            pnl_html = f'<div class="pnl" style="color:{pnl_color}">📊 PnL: {sign}{total_pnl:.2f} USD ({sign}{pnl_pct:.1f}%)</div>'
+        else:
+            pnl_html = '<div class="pnl" style="color:#aaa">📊 PnL: 待更新</div>'
+
+        badge = '🔮 虚拟' if is_virtual else '✅ 真实'
+        badge_color = '#888' if is_virtual else '#007AFF'
+        sl = sentiment.lower()
+        sentiment_emoji = '📈' if '看涨' in sentiment or 'bullish' in sl else ('📉' if '看跌' in sentiment or 'bearish' in sl else '😐')
+
+        return f"""
+<div class="card">
+  <div class="card-header">
+    <span class="badge" style="background:{badge_color}">{badge}</span>
+    <span class="time">🕐 {trade_time[:16]}</span>
+  </div>
+  <div class="news">📰 {news_text[:120]}{'...' if len(news_text) > 120 else ''}</div>
+  <div class="row">
+    <span>{sentiment_emoji} {sentiment}</span>
+    <span>⭐ 评分: {score}</span>
+    <span>💰 现货: {spot}</span>
+  </div>
+  <div class="row">
+    <span>📈 看涨: {call_simple}</span>
+    <span>📉 看跌: {put_simple}</span>
+    <span>📊 IV: {avg_iv}</span>
+  </div>
+  <div class="cost">💵 成本: {total_cost}</div>
+  {pnl_html}
+</div>"""
+
+    async def handle_positions_html(self, request):
+        """持仓卡片页面 - 最新20条直接展示，历史记录可折叠"""
+        try:
+            positions = self._parse_trade_log()
+            pnl_data = self._load_pnl()
+
+            RECENT_COUNT = 20
+            reversed_positions = list(reversed(positions))  # 最新在前
+            recent = reversed_positions[:RECENT_COUNT]
+            older = reversed_positions[RECENT_COUNT:]
+
+            if not positions:
+                recent_html = '<div class="empty">📭 暂无持仓记录</div>'
+                older_section = ''
+            else:
+                recent_html = ''.join(self._build_card_html(p, pnl_data) for p in recent)
+
+                if older:
+                    older_cards = ''.join(self._build_card_html(p, pnl_data) for p in older)
+                    older_section = f"""
+<div class="older-toggle" onclick="toggleOlder(this)">
+  📦 展开历史记录（{len(older)} 条）▼
+</div>
+<div id="older-cards" style="display:none">
+  {older_cards}
+</div>"""
+                else:
+                    older_section = ''
+
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>持仓记录</title>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;padding:16px;background:#f0f2f5}}
+.container{{max-width:800px;margin:0 auto}}
+h1{{color:#333;font-size:22px;margin-bottom:4px}}
+.subtitle{{color:#888;font-size:13px;margin-bottom:16px}}
+.back-link{{display:inline-block;margin-bottom:16px;color:#007AFF;text-decoration:none;font-size:14px}}
+.card{{background:white;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+.card-header{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}
+.badge{{color:white;font-size:11px;padding:3px 8px;border-radius:10px;font-weight:600}}
+.time{{color:#888;font-size:12px}}
+.news{{font-size:14px;color:#333;line-height:1.5;margin-bottom:10px;padding:8px;background:#f8f9fa;border-radius:8px;border-left:3px solid #007AFF}}
+.row{{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:#555;margin-bottom:6px}}
+.cost{{font-size:15px;font-weight:600;color:#333;margin-top:8px}}
+.pnl{{font-size:15px;font-weight:700;margin-top:4px}}
+.empty{{text-align:center;padding:40px;color:#aaa;font-size:16px}}
+.count{{background:#007AFF;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px}}
+.older-toggle{{background:white;border-radius:10px;padding:14px 16px;margin-bottom:14px;
+  box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer;color:#007AFF;font-size:14px;
+  font-weight:600;text-align:center;border:1.5px dashed #007AFF}}
+.older-toggle:hover{{background:#f0f7ff}}
+.older-toggle.open{{border-style:solid}}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back-link">← 返回首页</a>
+  <h1>💼 持仓记录 <span class="count">{len(positions)}</span></h1>
+  <div class="subtitle">更新时间: {now_str}（显示最新 {min(RECENT_COUNT, len(positions))} 条）</div>
+  {recent_html}
+  {older_section}
+</div>
+<script>
+function toggleOlder(el) {{
+  const div = document.getElementById('older-cards');
+  const hidden = div.style.display === 'none';
+  div.style.display = hidden ? 'block' : 'none';
+  el.classList.toggle('open', hidden);
+  const count = {len(older)};
+  el.textContent = hidden
+    ? '📦 收起历史记录（' + count + ' 条）▲'
+    : '📦 展开历史记录（' + count + ' 条）▼';
+}}
+</script>
+</body>
+</html>"""
+            return web.Response(text=html, content_type='text/html', charset='utf-8')
+
+        except Exception as e:
+            logger.error(f"持仓HTML页面错误: {e}")
+            return web.Response(text=f"<h1>错误: {e}</h1>", content_type='text/html', charset='utf-8')
+
     def _load_pnl(self) -> dict:
         """加载 PnL 数据"""
         if not self.pnl_file.exists():
