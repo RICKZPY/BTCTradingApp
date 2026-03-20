@@ -155,60 +155,81 @@ class StraddleExecutor:
                     # 筛选出最近到期的合约（通常流动性更好）
                     from datetime import datetime, timedelta
                     
-                    # 只考虑未来 7-30 天到期的合约
+                    # 目标：找距今最接近 3 天后到期的合约（保证每笔信号期权长度一致）
+                    # 由于 Deribit 不是每天都有合约，取所有到期日中最接近 +3 天的那个
                     now = datetime.now()
-                    min_expiry = now + timedelta(days=7)
-                    max_expiry = now + timedelta(days=30)
-                    
+                    target_expiry = now + timedelta(days=3)
+
+                    # 先收集所有未来合约的到期日（去重）
+                    all_expiries = set()
+                    for inst in instruments:
+                        exp_ts = inst.get('expiration_timestamp')
+                        if exp_ts:
+                            all_expiries.add(datetime.fromtimestamp(exp_ts / 1000))
+
+                    # 只保留未来的到期日，找最接近 target_expiry 的
+                    future_expiries = sorted(e for e in all_expiries if e > now)
+                    if not future_expiries:
+                        logger.error("未找到任何未来到期合约")
+                        return None, None
+
+                    chosen_expiry = min(future_expiries, key=lambda e: abs((e - target_expiry).total_seconds()))
+                    logger.info(f"目标到期日: {target_expiry.strftime('%Y-%m-%d')}，"
+                                f"实际选用: {chosen_expiry.strftime('%Y-%m-%d')} "
+                                f"(距今 {(chosen_expiry - now).days} 天)")
+
                     call_options = []
                     put_options = []
-                    
+
                     for inst in instruments:
                         try:
-                            # 解析到期时间
-                            expiry_str = inst.get('expiration_timestamp')
-                            if not expiry_str:
+                            exp_ts = inst.get('expiration_timestamp')
+                            if not exp_ts:
                                 continue
-                            
-                            expiry_dt = datetime.fromtimestamp(expiry_str / 1000)
-                            
-                            # 过滤到期时间
-                            if not (min_expiry <= expiry_dt <= max_expiry):
+
+                            expiry_dt = datetime.fromtimestamp(exp_ts / 1000)
+
+                            # 只取 chosen_expiry 当天的合约
+                            if expiry_dt.date() != chosen_expiry.date():
                                 continue
-                            
+
                             strike = inst.get('strike')
                             option_type = inst.get('option_type')
                             instrument_name = inst.get('instrument_name')
-                            
+
                             if not all([strike, option_type, instrument_name]):
                                 continue
-                            
-                            # 计算与现货价格的差距
+
                             price_diff = abs(strike - spot_price)
-                            
+
                             if option_type == 'call':
                                 call_options.append((instrument_name, strike, price_diff, expiry_dt))
                             elif option_type == 'put':
                                 put_options.append((instrument_name, strike, price_diff, expiry_dt))
-                        
+
                         except Exception as e:
                             logger.debug(f"解析合约失败: {e}")
                             continue
-                    
+
                     if not call_options or not put_options:
-                        logger.error("未找到合适的期权合约")
+                        logger.error(f"在 {chosen_expiry.strftime('%Y-%m-%d')} 未找到合适的期权合约")
                         return None, None
-                    
-                    # 按价格差距排序，选择最接近的
+
+                    # 按与现货价差排序，选 ATM
                     call_options.sort(key=lambda x: x[2])
                     put_options.sort(key=lambda x: x[2])
-                    
-                    call_instrument = call_options[0][0]
-                    put_instrument = put_options[0][0]
-                    
+
+                    # 优先选同一执行价的 call/put（真正的 ATM straddle）
+                    best_call = call_options[0]
+                    same_strike_puts = [p for p in put_options if p[1] == best_call[1]]
+                    best_put = same_strike_puts[0] if same_strike_puts else put_options[0]
+
+                    call_instrument = best_call[0]
+                    put_instrument = best_put[0]
+
                     logger.info(f"选择 ATM 期权:")
-                    logger.info(f"  看涨: {call_instrument} (执行价: {call_options[0][1]})")
-                    logger.info(f"  看跌: {put_instrument} (执行价: {put_options[0][1]})")
+                    logger.info(f"  看涨: {call_instrument} (执行价: {best_call[1]}, 价差: {best_call[2]:.0f})")
+                    logger.info(f"  看跌: {put_instrument} (执行价: {best_put[1]}, 价差: {best_put[2]:.0f})")
                     
                     return call_instrument, put_instrument
         
