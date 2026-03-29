@@ -245,7 +245,54 @@ class DeribitTrader:
         logger.info(f"取消订单: {order_id}")
         return await self._make_request("cancel", {"order_id": order_id})
     
-    async def close_position(self, instrument_name: str) -> Optional[Dict]:
+    async def create_combo(self, call_instrument: str, put_instrument: str, amount: float) -> Optional[str]:
+        """
+        创建 Straddle Combo instrument
+        
+        Deribit combo 下单两步：
+        1. create_combo → 得到 combo_id（如 BTC-STRD-29OCT21-3000）
+        2. buy(combo_id) → 实际下单，Deribit 界面显示为组合持仓
+        
+        Args:
+            call_instrument: 看涨合约名，如 BTC-29MAR26-70000-C
+            put_instrument:  看跌合约名，如 BTC-29MAR26-70000-P
+            amount: 每条腿的数量（BTC）
+            
+        Returns:
+            combo_id 字符串，失败返回 None
+        """
+        params = {
+            "trades": [
+                {"instrument_name": call_instrument, "amount": amount, "direction": "buy"},
+                {"instrument_name": put_instrument,  "amount": amount, "direction": "buy"},
+            ]
+        }
+        logger.info(f"创建 Straddle Combo: {call_instrument} + {put_instrument}")
+        result = await self._make_request("create_combo", params)
+        if result and "instrument_name" in result:
+            combo_id = result["instrument_name"]
+            logger.info(f"Combo 创建成功: {combo_id}")
+            return combo_id
+        logger.error(f"Combo 创建失败: {result}")
+        return None
+
+    async def buy_combo(self, combo_id: str, amount: float) -> Optional[Dict]:
+        """
+        买入已创建的 Combo（straddle 组合下单）
+        
+        Args:
+            combo_id: create_combo 返回的 instrument_name
+            amount:   数量（BTC，对应每条腿的数量）
+            
+        Returns:
+            订单信息
+        """
+        logger.info(f"Combo 下单: {combo_id}, 数量: {amount}")
+        return await self._make_request("buy", {
+            "instrument_name": combo_id,
+            "amount": amount,
+            "type": "market"
+        })
         """
         平仓
         

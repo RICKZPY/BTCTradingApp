@@ -351,7 +351,7 @@ class StraddleExecutor:
                     error_message="无法获取期权价格"
                 )
             
-            # 5. 解析合约信息 + 下单（使用市价单，数量为 0.1 BTC）
+            # 5. 解析合约信息 + 下单（优先 combo 组合下单，失败回退分腿）
             trade_amount = 0.1
             import re
             call_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-C', call_instrument)
@@ -361,59 +361,88 @@ class StraddleExecutor:
             expiry_date = datetime.now() + timedelta(days=14)
             total_cost = (call_price + put_price) * trade_amount * spot_price
             avg_iv = (call_iv + put_iv) / 2
-            
-            logger.info(f"下单买入看涨期权: {call_instrument}, 数量: {trade_amount}")
-            call_order = await self.trader.buy(
-                instrument_name=call_instrument,
-                amount=trade_amount,
-                order_type="market"
-            )
-            
-            if not call_order:
-                logger.warning(f"看涨期权下单失败，记录为虚拟交易")
-                return self._build_virtual_result(
-                    news, spot_price, call_instrument, put_instrument,
-                    call_price, put_price, call_strike, put_strike,
-                    expiry_date, trade_amount, total_cost, call_iv, put_iv,
-                    "看涨期权下单失败（测试网不可用）"
+
+            # 尝试 combo 组合下单
+            combo_order = None
+            combo_id = await self.trader.create_combo(call_instrument, put_instrument, trade_amount)
+            if combo_id:
+                combo_order = await self.trader.buy_combo(combo_id, trade_amount)
+
+            if combo_order:
+                # combo 下单成功，两条腿共用同一个 combo order_id
+                combo_order_id = combo_order.get('order', {}).get('order_id', combo_id)
+                logger.info(f"✓ Combo 下单成功: {combo_id}, 订单ID: {combo_order_id}")
+                call_option = OptionTrade(
+                    instrument_name=call_instrument,
+                    option_type="call",
+                    strike_price=call_strike,
+                    expiry_date=expiry_date,
+                    premium=call_price,
+                    quantity=trade_amount,
+                    order_id=f"COMBO:{combo_order_id}"
                 )
-            
-            logger.info(f"下单买入看跌期权: {put_instrument}, 数量: {trade_amount}")
-            put_order = await self.trader.buy(
-                instrument_name=put_instrument,
-                amount=trade_amount,
-                order_type="market"
-            )
-            
-            if not put_order:
-                logger.warning(f"看跌期权下单失败，记录为虚拟交易")
-                return self._build_virtual_result(
-                    news, spot_price, call_instrument, put_instrument,
-                    call_price, put_price, call_strike, put_strike,
-                    expiry_date, trade_amount, total_cost, call_iv, put_iv,
-                    "看跌期权下单失败（测试网不可用）"
+                put_option = OptionTrade(
+                    instrument_name=put_instrument,
+                    option_type="put",
+                    strike_price=put_strike,
+                    expiry_date=expiry_date,
+                    premium=put_price,
+                    quantity=trade_amount,
+                    order_id=f"COMBO:{combo_order_id}"
                 )
-            
-            # 6. 构建真实交易结果（复用已解析的数据）
-            call_option = OptionTrade(
-                instrument_name=call_instrument,
-                option_type="call",
-                strike_price=call_strike,
-                expiry_date=expiry_date,
-                premium=call_price,
-                quantity=trade_amount,
-                order_id=call_order.get('order', {}).get('order_id')
-            )
-            
-            put_option = OptionTrade(
-                instrument_name=put_instrument,
-                option_type="put",
-                strike_price=put_strike,
-                expiry_date=expiry_date,
-                premium=put_price,
-                quantity=trade_amount,
-                order_id=put_order.get('order', {}).get('order_id')
-            )
+            else:
+                # combo 失败，回退到分腿下单
+                logger.warning("Combo 下单失败，回退到分腿下单")
+                logger.info(f"下单买入看涨期权: {call_instrument}, 数量: {trade_amount}")
+                call_order = await self.trader.buy(
+                    instrument_name=call_instrument,
+                    amount=trade_amount,
+                    order_type="market"
+                )
+
+                if not call_order:
+                    logger.warning(f"看涨期权下单失败，记录为虚拟交易")
+                    return self._build_virtual_result(
+                        news, spot_price, call_instrument, put_instrument,
+                        call_price, put_price, call_strike, put_strike,
+                        expiry_date, trade_amount, total_cost, call_iv, put_iv,
+                        "看涨期权下单失败（测试网不可用）"
+                    )
+
+                logger.info(f"下单买入看跌期权: {put_instrument}, 数量: {trade_amount}")
+                put_order = await self.trader.buy(
+                    instrument_name=put_instrument,
+                    amount=trade_amount,
+                    order_type="market"
+                )
+
+                if not put_order:
+                    logger.warning(f"看跌期权下单失败，记录为虚拟交易")
+                    return self._build_virtual_result(
+                        news, spot_price, call_instrument, put_instrument,
+                        call_price, put_price, call_strike, put_strike,
+                        expiry_date, trade_amount, total_cost, call_iv, put_iv,
+                        "看跌期权下单失败（测试网不可用）"
+                    )
+
+                call_option = OptionTrade(
+                    instrument_name=call_instrument,
+                    option_type="call",
+                    strike_price=call_strike,
+                    expiry_date=expiry_date,
+                    premium=call_price,
+                    quantity=trade_amount,
+                    order_id=call_order.get('order', {}).get('order_id')
+                )
+                put_option = OptionTrade(
+                    instrument_name=put_instrument,
+                    option_type="put",
+                    strike_price=put_strike,
+                    expiry_date=expiry_date,
+                    premium=put_price,
+                    quantity=trade_amount,
+                    order_id=put_order.get('order', {}).get('order_id')
+                )
             
             logger.info(f"✓ 跨式交易执行成功")
             logger.info(f"  看涨订单 ID: {call_option.order_id}")
