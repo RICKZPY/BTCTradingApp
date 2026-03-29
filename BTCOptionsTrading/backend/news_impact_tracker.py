@@ -121,7 +121,7 @@ def get_iv_changes(instrument: str, t0_ts: int) -> dict:
         rows = conn.execute(
             "SELECT ts, mark_iv FROM iv_snapshots "
             "WHERE instrument=? AND ts BETWEEN ? AND ? ORDER BY ts",
-            (instrument, t0_ts - 600, t0_ts + 4 * 3600 + 600)
+            (instrument, t0_ts - 600, t0_ts + 24 * 3600 + 600)
         ).fetchall()
         conn.close()
 
@@ -134,7 +134,7 @@ def get_iv_changes(instrument: str, t0_ts: int) -> dict:
 
         result = {"iv_at_t0": round(iv0, 2)}
 
-        for hours in [1, 4]:
+        for hours in [1, 4, 24]:
             target_ts = t0_ts + hours * 3600
             nearby = [r for r in rows if abs(r[0] - target_ts) < 600]
             if nearby:
@@ -255,7 +255,8 @@ async def update_impact():
 
             # ── IV 变化（从本地 SQLite 查，无需网络）────────────
             iv_changes = record.get('iv_changes', {})
-            if call_inst and not iv_changes.get('iv_at_t0'):
+            # 如果缺少 T+24h 数据，强制重新查询
+            if call_inst and (not iv_changes.get('iv_at_t0') or 'iv_chg_t24h' not in iv_changes):
                 iv_data = get_iv_changes(call_inst, t0_ts)
                 if iv_data:
                     iv_changes.update(iv_data)

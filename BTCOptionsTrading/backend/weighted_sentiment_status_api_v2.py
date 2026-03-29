@@ -978,32 +978,37 @@ if (urlInst) {{
                 news = item.get('news_content', '')[:120]
                 call_inst = item.get('call_instrument', '')
 
-                # 价格变化行
-                chg_html = ""
-                for label in ['T+1h', 'T+4h', 'T+24h']:
-                    val = changes.get(label)
-                    if val is None:
-                        chg_html += f'<div class="chg pending"><span class="label">{label} 价格</span><span class="val">待计算</span></div>'
-                    else:
-                        color = "#34C759" if val > 0 else ("#FF3B30" if val < 0 else "#888")
-                        sign = "+" if val > 0 else ""
-                        chg_html += f'<div class="chg"><span class="label">{label} 价格</span><span class="val" style="color:{color}">{sign}{val:.2f}%</span></div>'
-
-                # IV 变化行
+                # IV 基础信息
                 iv_changes = item.get('iv_changes', {})
                 iv0 = iv_changes.get('iv_at_t0')
-                iv_html = ""
-                if iv0 is not None:
-                    iv_html += f'<div class="chg iv"><span class="label">T0 IV</span><span class="val">{iv0:.1f}%</span></div>'
-                    for h_label, key_chg, key_abs in [('T+1h IV', 'iv_chg_t1h', 'iv_t1h'), ('T+4h IV', 'iv_chg_t4h', 'iv_t4h')]:
-                        chg_val = iv_changes.get(key_chg)
-                        abs_val = iv_changes.get(key_abs)
-                        if chg_val is not None:
-                            color = "#FF9500" if chg_val > 0 else ("#5AC8FA" if chg_val < 0 else "#888")
-                            sign = "+" if chg_val > 0 else ""
-                            iv_html += f'<div class="chg iv"><span class="label">{h_label}</span><span class="val" style="color:{color}">{sign}{chg_val:.1f}% <small>({abs_val:.1f}%)</small></span></div>'
-                        else:
-                            iv_html += f'<div class="chg iv pending"><span class="label">{h_label}</span><span class="val">无数据</span></div>'
+                iv0_str = f"{iv0:.1f}%" if iv0 is not None else "无数据"
+
+                # 对齐表格：价格变化 + IV 变化，T+1h / T+4h / T+24h 三列
+                def price_cell(label):
+                    val = changes.get(label)
+                    if val is None:
+                        return '<td class="pending">待计算</td>'
+                    color = "#34C759" if val > 0 else ("#FF3B30" if val < 0 else "#888")
+                    sign = "+" if val > 0 else ""
+                    return f'<td style="color:{color};font-weight:700">{sign}{val:.2f}%</td>'
+
+                def iv_cell(chg_key, abs_key):
+                    chg = iv_changes.get(chg_key)
+                    abs_v = iv_changes.get(abs_key)
+                    if chg is None:
+                        return '<td class="pending">无数据</td>'
+                    color = "#FF9500" if chg > 0 else ("#5AC8FA" if chg < 0 else "#888")
+                    sign = "+" if chg > 0 else ""
+                    return f'<td style="color:{color};font-weight:700">{sign}{chg:.1f}%<br><small style="color:#aaa;font-weight:400">{abs_v:.1f}%</small></td>'
+
+                table_html = f"""
+<table class="impact-table">
+  <thead><tr><th></th><th>T+1h</th><th>T+4h</th><th>T+24h</th></tr></thead>
+  <tbody>
+    <tr><td class="row-label">💰 价格</td>{price_cell('T+1h')}{price_cell('T+4h')}{price_cell('T+24h')}</tr>
+    <tr><td class="row-label">📉 IV变化</td>{iv_cell('iv_chg_t1h','iv_t1h')}{iv_cell('iv_chg_t4h','iv_t4h')}{iv_cell('iv_chg_t24h','iv_t24h')}</tr>
+  </tbody>
+</table>"""
 
                 # 结论颜色
                 if '未引发' in conclusion or '不足' in conclusion:
@@ -1021,11 +1026,8 @@ if (urlInst) {{
     <span class="sentiment">{s_emoji} {sentiment}</span>
   </div>
   <div class="news">📰 {news}{'...' if len(item.get('news_content',''))>120 else ''}</div>
-  <div class="spot">💰 下单时 BTC: ${spot:,.0f} &nbsp;|&nbsp; 📈 {self._simplify_instrument(call_inst)}</div>
-  <div class="section-label">📊 价格变化</div>
-  <div class="changes">{chg_html}</div>
-  <div class="section-label">📉 IV 变化（合约隐含波动率）</div>
-  <div class="changes">{iv_html if iv_html else '<div class="chg pending"><span class="label">IV数据</span><span class="val">无5分钟记录</span></div>'}</div>
+  <div class="spot">💰 下单时 BTC: ${spot:,.0f} &nbsp;|&nbsp; 📈 {self._simplify_instrument(call_inst)} &nbsp;|&nbsp; 📉 IV: {iv0_str}</div>
+  {table_html}
   <div class="conclusion" style="color:{conc_color}">💡 {conclusion}</div>
 </div>"""
 
@@ -1049,11 +1051,11 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 .sentiment{{font-size:13px;color:#555}}
 .news{{font-size:14px;color:#333;line-height:1.5;margin-bottom:10px;padding:8px;background:#f8f9fa;border-radius:8px;border-left:3px solid #007AFF}}
 .spot{{font-size:12px;color:#888;margin-bottom:10px}}
-.changes{{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}}
-.chg{{background:#f8f9fa;border-radius:8px;padding:8px 12px;min-width:80px;text-align:center}}
-.chg.pending{{opacity:.5}}
-.label{{display:block;font-size:11px;color:#888;margin-bottom:3px}}
-.val{{display:block;font-size:16px;font-weight:700}}
+.impact-table{{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:14px}}
+.impact-table th{{background:#f0f2f5;padding:6px 10px;text-align:center;font-size:11px;color:#666;font-weight:600}}
+.impact-table td{{padding:8px 10px;text-align:center;border-bottom:1px solid #f0f2f5}}
+.impact-table td.row-label{{text-align:left;font-size:12px;color:#888;font-weight:600;white-space:nowrap}}
+.impact-table td.pending{{color:#ccc;font-size:12px}}
 .conclusion{{font-size:14px;font-weight:600;padding:8px;background:#f8f9fa;border-radius:8px}}
 .empty{{text-align:center;padding:40px;color:#aaa}}
 .count{{background:#007AFF;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px}}
