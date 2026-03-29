@@ -72,6 +72,8 @@ def parse_trades() -> list[dict]:
                         pass
                 elif k == '看涨期权':
                     t['call_instrument'] = v
+                elif k == 'Combo ID':
+                    t['combo_id'] = v
 
             if 'trade_time' not in t or 'call_instrument' not in t:
                 continue
@@ -224,6 +226,7 @@ async def update_impact():
                     "sentiment": trade.get('sentiment', ''),
                     "score": trade.get('score', ''),
                     "call_instrument": call_inst,
+                    "combo_id": trade.get('combo_id', ''),
                     "spot_at_trade": spot_t0,
                     "price_changes": {},
                     "iv_changes": {},

@@ -185,6 +185,8 @@ class MobileFriendlyStatusAPI:
                         position['评分'] = value
                     elif key == '虚拟交易':
                         position['虚拟交易'] = value == 'True'
+                    elif key == 'Combo ID':
+                        position['combo_id'] = value
                     elif key == '现货价格':
                         position['现货价格'] = value
                     elif key == '看涨期权':
@@ -346,6 +348,7 @@ class MobileFriendlyStatusAPI:
         is_virtual = pos.get('虚拟交易', False)
         trade_time = pos.get('交易时间', '未知')
         call_inst = pos.get('看涨合约', '')
+        combo_id = pos.get('combo_id', '')
         news_text = pos.get('新闻内容', '未知')
         sentiment = pos.get('情绪', '未知')
         score = pos.get('评分', '未知')
@@ -389,6 +392,7 @@ class MobileFriendlyStatusAPI:
     <span>📊 IV: {avg_iv}</span>
   </div>
   <div class="cost">💵 成本: {total_cost}</div>
+  {f'<div class="combo-id">🔗 Combo: <a href="https://www.deribit.com/combo/{combo_id}" target="_blank">{combo_id}</a></div>' if combo_id else ''}
   {pnl_html}
 </div>"""
 
@@ -441,6 +445,8 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 .news{{font-size:14px;color:#333;line-height:1.5;margin-bottom:10px;padding:8px;background:#f8f9fa;border-radius:8px;border-left:3px solid #007AFF}}
 .row{{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:#555;margin-bottom:6px}}
 .cost{{font-size:15px;font-weight:600;color:#333;margin-top:8px}}
+.combo-id{{font-size:12px;color:#888;margin-top:4px}}
+.combo-id a{{color:#007AFF;text-decoration:none}}
 .pnl{{font-size:15px;font-weight:700;margin-top:4px}}
 .empty{{text-align:center;padding:40px;color:#aaa;font-size:16px}}
 .count{{background:#007AFF;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px}}
@@ -1000,6 +1006,7 @@ if (urlInst) {{
                 trade_time = item.get('trade_time', '')[:16]
                 news = item.get('news_content', '')[:120]
                 call_inst = item.get('call_instrument', '')
+                combo_id = item.get('combo_id', '')
 
                 # IV 基础信息
                 iv_changes = item.get('iv_changes', {})
@@ -1050,6 +1057,7 @@ if (urlInst) {{
   </div>
   <div class="news">📰 {news}{'...' if len(item.get('news_content',''))>120 else ''}</div>
   <div class="spot">💰 下单时 BTC: ${spot:,.0f} &nbsp;|&nbsp; 📈 {self._simplify_instrument(call_inst)} &nbsp;|&nbsp; 📉 IV: {iv0_str}</div>
+  {f'<div class="combo-id">🔗 Combo: <a href="https://www.deribit.com/combo/{combo_id}" target="_blank">{combo_id}</a></div>' if combo_id else ''}
   {table_html}
   <div class="conclusion" style="color:{conc_color}">💡 {conclusion}</div>
 </div>"""
