@@ -193,19 +193,54 @@ class MobileFriendlyStatusAPI:
                         position['现货价格'] = value
                     elif key == '看涨期权':
                         position['看涨合约'] = value
+                        position['_current_side'] = 'call'
                     elif key == '看跌期权':
                         position['看跌合约'] = value
+                        position['_current_side'] = 'put'
+                    elif key == '执行价':
+                        # 只取看涨期权的执行价（call/put 同执行价）
+                        if position.get('_current_side') == 'call' and '执行价' not in position:
+                            try:
+                                position['执行价'] = float(value.replace('$', '').replace(',', ''))
+                            except Exception:
+                                pass
                     elif key == '入场价(BTC)':
                         # 区分看涨/看跌（看涨期权行在前）
                         if '看涨合约' in position and '看跌合约' not in position:
                             position['call_entry_btc'] = value
                         else:
                             position['put_entry_btc'] = value
+                    elif key == '权利金':
+                        # 兼容旧日志（没有入场价字段，用权利金代替）
+                        try:
+                            btc_val = float(value.replace(' BTC', ''))
+                            side = position.get('_current_side')
+                            if side == 'call' and 'call_entry_btc' not in position:
+                                position['call_entry_btc'] = str(btc_val)
+                            elif side == 'put' and 'put_entry_btc' not in position:
+                                position['put_entry_btc'] = str(btc_val)
+                        except Exception:
+                            pass
                     elif key == '平均 IV':
                         position['平均IV'] = value
                     elif key == '总成本':
                         position['总成本'] = value                
                 if position and '新闻内容' in position:
+                    # 如果没有记录盈亏平衡，用已有数据实时计算
+                    if '盈亏平衡' not in position:
+                        try:
+                            strike = position.get('执行价')
+                            call_e = float(position.get('call_entry_btc', 0))
+                            put_e = float(position.get('put_entry_btc', 0))
+                            spot_str = position.get('现货价格', '0').replace('$', '').replace(',', '')
+                            spot = float(spot_str)
+                            if strike and call_e and put_e and spot:
+                                total_prem_usd = (call_e + put_e) * spot
+                                be_lower = strike - total_prem_usd
+                                be_upper = strike + total_prem_usd
+                                position['盈亏平衡'] = f"${be_lower:.2f} ~ ${be_upper:.2f}"
+                        except Exception:
+                            pass
                     positions.append(position)
 
             # 只保留 23MAR26 及以后的合约（过滤掉已清理的早期持仓）
