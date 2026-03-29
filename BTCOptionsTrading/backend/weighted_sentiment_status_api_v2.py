@@ -399,13 +399,16 @@ class MobileFriendlyStatusAPI:
 
         pnl_key = f"{trade_time[:16]}_{call_inst}"
         pnl = pnl_data.get(pnl_key, {})
+        is_settled = pnl.get('settled', False)
         if pnl:
             total_pnl = pnl.get('total_pnl_usd', 0)
             pnl_pct = pnl.get('pnl_pct', 0)
             sign = "+" if total_pnl >= 0 else ""
             pnl_color = "#34C759" if total_pnl >= 0 else "#FF3B30"
-            pnl_html = f'<div class="pnl" style="color:{pnl_color}">📊 PnL: {sign}{total_pnl:.2f} USD ({sign}{pnl_pct:.1f}%)</div>'
+            settled_tag = ' <span style="font-size:11px;background:#888;color:white;padding:1px 6px;border-radius:8px;margin-left:4px">已结算</span>' if is_settled else ''
+            pnl_html = f'<div class="pnl" style="color:{pnl_color}">📊 PnL: {sign}{total_pnl:.2f} USD ({sign}{pnl_pct:.1f}%){settled_tag}</div>'
         else:
+            is_settled = False
             pnl_html = '<div class="pnl" style="color:#aaa">📊 PnL: 待更新</div>'
 
         badge = '🔮 虚拟' if is_virtual else '✅ 真实'
@@ -432,7 +435,7 @@ class MobileFriendlyStatusAPI:
   </div>
   <div class="cost">💵 成本: {total_cost}</div>
   {f'<div class="combo-id">🔗 Combo: <a href="https://www.deribit.com/combo/{combo_id}" target="_blank">{combo_id}</a></div>' if combo_id else ''}
-  {self._build_be_html(be_range, str(pnl.get('spot_price', '')) if pnl else '')}
+  {'' if is_settled else self._build_be_html(be_range, str(pnl.get('spot_price', '')) if pnl else '')}
   {pnl_html}
 </div>"""
 

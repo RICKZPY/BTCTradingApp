@@ -15,7 +15,7 @@ import aiohttp
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # 配置日志
@@ -130,6 +130,46 @@ async def get_spot_price(session: aiohttp.ClientSession) -> float:
         return 0.0
 
 
+def parse_expiry(instrument_name: str) -> datetime | None:
+    """从合约名解析到期时间（Deribit 期权到期时间为 UTC 08:00）"""
+    try:
+        m = re.search(r'BTC-(\d{1,2})([A-Z]{3})(\d{2})-', instrument_name)
+        if not m:
+            return None
+        day, mon, yr2 = m.group(1), m.group(2), m.group(3)
+        expiry = datetime.strptime(f"{day}{mon}20{yr2} 08:00", "%d%b%Y %H:%M")
+        return expiry.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+async def get_delivery_price(session: aiohttp.ClientSession, instrument_name: str) -> float:
+    """获取已到期合约的结算价（delivery price）"""
+    try:
+        url = f"{MAINNET_URL}/public/get_delivery_prices"
+        # 提取到期日期字符串，如 23MAR26
+        m = re.search(r'BTC-(\d{1,2}[A-Z]{3}\d{2})-', instrument_name)
+        if not m:
+            return 0.0
+        async with session.get(url, params={"index_name": "btc_usd", "count": 30},
+                               timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            data = await resp.json()
+            if 'result' in data and 'data' in data['result']:
+                # 找最接近到期日的结算价
+                expiry_dt = parse_expiry(instrument_name)
+                if not expiry_dt:
+                    return 0.0
+                expiry_ts = int(expiry_dt.timestamp() * 1000)
+                best = min(data['result']['data'],
+                           key=lambda x: abs(int(x.get('date', 0)) - expiry_ts),
+                           default=None)
+                if best:
+                    return float(best.get('delivery_price', 0.0))
+    except Exception as e:
+        logger.warning(f"获取结算价失败 {instrument_name}: {e}")
+    return 0.0
+
+
 async def update_pnl():
     """主函数：更新所有持仓的 PnL"""
     logger.info("开始更新 PnL...")
@@ -165,55 +205,110 @@ async def update_pnl():
             if not call_inst or not put_inst:
                 continue
 
-            # 用 trade_time + call_instrument 作为唯一 key
             key = f"{trade_time[:16]}_{call_inst}"
-
             call_entry = pos.get('call_entry_btc', 0.0)
             put_entry = pos.get('put_entry_btc', 0.0)
             entry_spot = pos.get('spot_price', spot_price)
-            quantity = 0.1  # 固定数量
+            quantity = 0.1
 
-            # 获取当前价格
-            call_now = await get_current_price(session, call_inst)
-            put_now = await get_current_price(session, put_inst)
+            # ── 判断是否已到期 ──────────────────────────────────
+            expiry_dt = parse_expiry(call_inst)
+            now_utc = datetime.now(timezone.utc)
+            is_expired = expiry_dt is not None and now_utc >= expiry_dt
 
-            call_current = call_now['mark_price']
-            put_current = put_now['mark_price']
+            existing = pnl_data.get(key, {})
 
-            # PnL 计算（BTC单位转USD）
-            # PnL = (当前价 - 入场价) × 数量 × 现货价
-            call_pnl_usd = (call_current - call_entry) * quantity * spot_price
-            put_pnl_usd = (put_current - put_entry) * quantity * spot_price
-            total_pnl_usd = call_pnl_usd + put_pnl_usd
+            # 已到期且已锁定，跳过
+            if existing.get('settled'):
+                logger.info(f"{call_inst[:20]}... | 已结算，跳过")
+                continue
 
-            # 入场总成本（USD）
-            entry_cost_usd = (call_entry + put_entry) * quantity * entry_spot
-            pnl_pct = (total_pnl_usd / entry_cost_usd * 100) if entry_cost_usd > 0 else 0.0
+            if is_expired:
+                # ── 到期结算：用结算价计算最终 PnL ──────────────
+                delivery_spot = await get_delivery_price(session, call_inst)
+                if delivery_spot <= 0:
+                    # 结算价拿不到，用当前现货价代替
+                    delivery_spot = spot_price
+                    logger.warning(f"{call_inst}: 无法获取结算价，用当前现货价 ${delivery_spot:.0f} 代替")
 
-            pnl_data[key] = {
-                "trade_time": trade_time,
-                "call_instrument": call_inst,
-                "put_instrument": put_inst,
-                "call_entry_btc": call_entry,
-                "put_entry_btc": put_entry,
-                "call_current_btc": call_current,
-                "put_current_btc": put_current,
-                "call_pnl_usd": round(call_pnl_usd, 2),
-                "put_pnl_usd": round(put_pnl_usd, 2),
-                "total_pnl_usd": round(total_pnl_usd, 2),
-                "pnl_pct": round(pnl_pct, 2),
-                "entry_cost_usd": round(entry_cost_usd, 2),
-                "spot_price": spot_price,
-                "is_virtual": pos.get('is_virtual', False),
-                "updated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-            }
+                # 到期时期权内在价值（BTC单位）
+                # 解析执行价
+                strike_m = re.search(r'-(\d+)-[CP]$', call_inst)
+                strike = float(strike_m.group(1)) if strike_m else 0.0
 
-            logger.info(
-                f"{call_inst[:20]}... | "
-                f"Call PnL: ${call_pnl_usd:+.2f} | "
-                f"Put PnL: ${put_pnl_usd:+.2f} | "
-                f"Total: ${total_pnl_usd:+.2f} ({pnl_pct:+.1f}%)"
-            )
+                # Call 内在价值 = max(spot - strike, 0) / spot
+                call_intrinsic = max(delivery_spot - strike, 0) / delivery_spot if delivery_spot > 0 else 0.0
+                # Put 内在价值 = max(strike - spot, 0) / spot
+                put_intrinsic = max(strike - delivery_spot, 0) / delivery_spot if delivery_spot > 0 else 0.0
+
+                call_pnl_usd = (call_intrinsic - call_entry) * quantity * delivery_spot
+                put_pnl_usd = (put_intrinsic - put_entry) * quantity * delivery_spot
+                total_pnl_usd = call_pnl_usd + put_pnl_usd
+                entry_cost_usd = (call_entry + put_entry) * quantity * entry_spot
+                pnl_pct = (total_pnl_usd / entry_cost_usd * 100) if entry_cost_usd > 0 else 0.0
+
+                pnl_data[key] = {
+                    **existing,
+                    "trade_time": trade_time,
+                    "call_instrument": call_inst,
+                    "put_instrument": put_inst,
+                    "call_entry_btc": call_entry,
+                    "put_entry_btc": put_entry,
+                    "call_current_btc": call_intrinsic,
+                    "put_current_btc": put_intrinsic,
+                    "call_pnl_usd": round(call_pnl_usd, 2),
+                    "put_pnl_usd": round(put_pnl_usd, 2),
+                    "total_pnl_usd": round(total_pnl_usd, 2),
+                    "pnl_pct": round(pnl_pct, 2),
+                    "entry_cost_usd": round(entry_cost_usd, 2),
+                    "spot_price": delivery_spot,
+                    "is_virtual": pos.get('is_virtual', False),
+                    "settled": True,
+                    "expiry_dt": expiry_dt.strftime("%Y-%m-%d UTC 08:00"),
+                    "updated_at": now_utc.strftime("%Y-%m-%d %H:%M UTC")
+                }
+                logger.info(
+                    f"{call_inst[:20]}... | 已到期结算 | "
+                    f"结算价=${delivery_spot:.0f} | "
+                    f"Total: ${total_pnl_usd:+.2f} ({pnl_pct:+.1f}%)"
+                )
+            else:
+                # ── 未到期：正常 mark-to-market ──────────────────
+                call_now = await get_current_price(session, call_inst)
+                put_now = await get_current_price(session, put_inst)
+                call_current = call_now['mark_price']
+                put_current = put_now['mark_price']
+
+                call_pnl_usd = (call_current - call_entry) * quantity * spot_price
+                put_pnl_usd = (put_current - put_entry) * quantity * spot_price
+                total_pnl_usd = call_pnl_usd + put_pnl_usd
+                entry_cost_usd = (call_entry + put_entry) * quantity * entry_spot
+                pnl_pct = (total_pnl_usd / entry_cost_usd * 100) if entry_cost_usd > 0 else 0.0
+
+                pnl_data[key] = {
+                    "trade_time": trade_time,
+                    "call_instrument": call_inst,
+                    "put_instrument": put_inst,
+                    "call_entry_btc": call_entry,
+                    "put_entry_btc": put_entry,
+                    "call_current_btc": call_current,
+                    "put_current_btc": put_current,
+                    "call_pnl_usd": round(call_pnl_usd, 2),
+                    "put_pnl_usd": round(put_pnl_usd, 2),
+                    "total_pnl_usd": round(total_pnl_usd, 2),
+                    "pnl_pct": round(pnl_pct, 2),
+                    "entry_cost_usd": round(entry_cost_usd, 2),
+                    "spot_price": spot_price,
+                    "is_virtual": pos.get('is_virtual', False),
+                    "settled": False,
+                    "updated_at": now_utc.strftime("%Y-%m-%d %H:%M UTC")
+                }
+                logger.info(
+                    f"{call_inst[:20]}... | "
+                    f"Call PnL: ${call_pnl_usd:+.2f} | "
+                    f"Put PnL: ${put_pnl_usd:+.2f} | "
+                    f"Total: ${total_pnl_usd:+.2f} ({pnl_pct:+.1f}%)"
+                )
 
     # 保存 PnL 数据
     PNL_FILE.parent.mkdir(exist_ok=True)
