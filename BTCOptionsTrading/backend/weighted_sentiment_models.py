@@ -11,49 +11,29 @@ from typing import Optional
 
 @dataclass
 class WeightedNews:
-    """加权情绪新闻数据类
-    
-    表示从加权情绪API获取的新闻项，包含情绪分析和重要性评分
-    """
-    news_id: str              # 新闻唯一标识符
-    content: str              # 新闻内容
-    sentiment: str            # 情绪方向: "positive", "negative", "neutral"
-    importance_score: int     # 重要性评分: 1-10
-    timestamp: datetime       # 新闻时间戳
-    source: Optional[str] = None  # 新闻来源
-    
+    """加权情绪新闻数据类"""
+    news_id: str
+    content: str
+    sentiment: str
+    importance_score: float   # 支持小数（API 返回 8.5 等）
+    timestamp: datetime
+    source: Optional[str] = None
+    has_similar_high_scores: bool = False   # API 已检测到同类高频新闻
+    event_category: str = ""               # 事件分类，如 "地缘冲突"
+
     def __post_init__(self):
-        """验证数据完整性和有效性"""
         self.validate()
-    
+
     def validate(self) -> None:
-        """验证新闻数据的有效性
-        
-        验证规则：
-        - news_id 必须非空
-        - importance_score 必须在 1-10 范围内
-        - sentiment 必须是有效值之一
-        
-        Raises:
-            ValueError: 如果验证失败
-        """
-        # 验证 news_id 非空
         if not self.news_id or not self.news_id.strip():
             raise ValueError("news_id 不能为空")
-        
-        # 验证 importance_score 范围
-        if not isinstance(self.importance_score, int):
-            raise ValueError(f"importance_score 必须是整数，当前类型: {type(self.importance_score)}")
-        
-        if not (1 <= self.importance_score <= 10):
-            raise ValueError(f"importance_score 必须在 1-10 范围内，当前值: {self.importance_score}")
-        
-        # 验证 sentiment 为有效值
+        if not isinstance(self.importance_score, (int, float)):
+            raise ValueError(f"importance_score 必须是数字，当前类型: {type(self.importance_score)}")
+        if not (0 <= self.importance_score <= 10):
+            raise ValueError(f"importance_score 必须在 0-10 范围内，当前值: {self.importance_score}")
         valid_sentiments = {"positive", "negative", "neutral"}
         if self.sentiment not in valid_sentiments:
-            raise ValueError(
-                f"sentiment 必须是 {valid_sentiments} 之一，当前值: {self.sentiment}"
-            )
+            raise ValueError(f"sentiment 必须是 {valid_sentiments} 之一，当前值: {self.sentiment}")
 
 
 @dataclass

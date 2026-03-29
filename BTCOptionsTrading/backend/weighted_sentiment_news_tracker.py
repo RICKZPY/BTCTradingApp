@@ -130,8 +130,7 @@ class NewsTracker:
                 )
                 
                 # 检查新闻是否满足评分阈值
-                is_high_score = news.importance_score >= 8
-                
+                is_high_score = news.importance_score >= 8                
                 # 只保留未处理且高分的新闻
                 if not is_processed and is_high_score:
                     filtered_news.append(news)

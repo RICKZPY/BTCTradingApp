@@ -536,6 +536,10 @@ class TradeFilter:
         if news.importance_score < 8:
             return False, f"评分 {news.importance_score} < 8，跳过"
 
+        # ── 条件 1b：API 已标记同类高频新闻 ──────────────────
+        if news.has_similar_high_scores:
+            return False, f"API 标记 has_similar_high_scores=True（同类事件已高频出现），跳过"
+
         # ── 条件 2：当前 IV < 55% ──────────────────────────
         call_iv = await self.executor.get_option_iv(call_instrument)
         put_iv = await self.executor.get_option_iv(put_instrument)

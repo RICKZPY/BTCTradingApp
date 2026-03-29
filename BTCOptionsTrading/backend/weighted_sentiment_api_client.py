@@ -212,9 +212,11 @@ class NewsAPIClient:
             news_id=str(news_id),
             content=str(content),
             sentiment=sentiment,
-            importance_score=int(importance_score),
+            importance_score=float(importance_score),
             timestamp=timestamp,
-            source=source  # 可选字段
+            source=source,
+            has_similar_high_scores=bool(item.get('has_similar_high_scores', False)),
+            event_category=str(item.get('event_category', ''))
         )
         
         return news
