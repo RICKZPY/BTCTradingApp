@@ -50,6 +50,7 @@ class MobileFriendlyStatusAPI:
         self.log_dir = Path(__file__).parent / "logs"
         self.db_path = Path(__file__).parent / "data" / "weighted_news_history.db"
         self.pnl_file = Path(__file__).parent / "data" / "pnl_history.json"
+        self.impact_file = Path(__file__).parent / "data" / "news_impact.json"
     
     def setup_routes(self):
         """设置路由"""
@@ -58,8 +59,10 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/positions', self.handle_positions_html)
         self.app.router.add_get('/api/iv-history', self.handle_iv_history)
         self.app.router.add_get('/api/iv-detail', self.handle_iv_detail)
+        self.app.router.add_get('/api/news-impact', self.handle_news_impact)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
+        self.app.router.add_get('/news-impact', self.handle_news_impact_page)
         self.app.router.add_get('/', self.handle_root)
     
     async def handle_root(self, request):
@@ -119,6 +122,12 @@ class MobileFriendlyStatusAPI:
                     <h3>🔬 合约 IV 5分钟走势</h3>
                     <p>查看持仓合约的精细 IV 变化（每5分钟采集）</p>
                     <p><a href="/iv-detail-chart">查看走势 →</a></p>
+                </div>
+                
+                <div class="endpoint">
+                    <h3>🔍 新闻事后影响验证</h3>
+                    <p>追踪每条触发交易的新闻对 BTC 价格的实际影响（T+1h/4h/24h）</p>
+                    <p><a href="/news-impact">查看验证 →</a> &nbsp; <a href="/api/news-impact">JSON →</a></p>
                 </div>
             </div>
         </body>
@@ -922,6 +931,124 @@ if (urlInst) {{
             "loadIVData();setInterval(loadIVData,60000);\n"
             "</script></body></html>"
         )
+        return web.Response(text=html, content_type='text/html', charset='utf-8')
+
+    async def handle_news_impact(self, request):
+        """返回新闻影响数据 JSON"""
+        if not self.impact_file.exists():
+            return web.json_response(
+                {"数据": [], "消息": "暂无数据，请先运行 news_impact_tracker.py"},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2)
+            )
+        try:
+            data = json.loads(self.impact_file.read_text(encoding='utf-8'))
+            items = sorted(data.values(), key=lambda x: x.get('trade_time', ''), reverse=True)
+            return web.json_response(
+                {"数量": len(items), "数据": items},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2)
+            )
+        except Exception as e:
+            return web.json_response({"错误": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+
+    async def handle_news_impact_page(self, request):
+        """新闻事后影响验证页面"""
+        impact_data = {}
+        if self.impact_file.exists():
+            try:
+                impact_data = json.loads(self.impact_file.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+
+        items = sorted(impact_data.values(), key=lambda x: x.get('trade_time', ''), reverse=True)
+
+        cards_html = ""
+        if not items:
+            cards_html = '<div class="empty">📭 暂无数据，请先运行 news_impact_tracker.py</div>'
+        else:
+            for item in items:
+                changes = item.get('price_changes', {})
+                score = item.get('score', '?')
+                sentiment = item.get('sentiment', '')
+                sl = sentiment.lower()
+                s_emoji = '📈' if '看涨' in sentiment or 'bullish' in sl else ('📉' if '看跌' in sentiment or 'bearish' in sl else '😐')
+                spot = item.get('spot_at_trade', 0)
+                conclusion = item.get('conclusion', '待计算')
+                trade_time = item.get('trade_time', '')[:16]
+                news = item.get('news_content', '')[:120]
+                call_inst = item.get('call_instrument', '')
+
+                # 价格变化行
+                chg_html = ""
+                for label in ['T+1h', 'T+4h', 'T+24h']:
+                    val = changes.get(label)
+                    if val is None:
+                        chg_html += f'<div class="chg pending"><span class="label">{label}</span><span class="val">待计算</span></div>'
+                    else:
+                        color = "#34C759" if val > 0 else ("#FF3B30" if val < 0 else "#888")
+                        sign = "+" if val > 0 else ""
+                        chg_html += f'<div class="chg"><span class="label">{label}</span><span class="val" style="color:{color}">{sign}{val:.2f}%</span></div>'
+
+                # 结论颜色
+                if '未引发' in conclusion or '不足' in conclusion:
+                    conc_color = "#888"
+                elif '显著' in conclusion:
+                    conc_color = "#FF9500"
+                else:
+                    conc_color = "#007AFF"
+
+                cards_html += f"""
+<div class="card">
+  <div class="card-header">
+    <span class="time">🕐 {trade_time}</span>
+    <span class="score">⭐ {score}</span>
+    <span class="sentiment">{s_emoji} {sentiment}</span>
+  </div>
+  <div class="news">📰 {news}{'...' if len(item.get('news_content',''))>120 else ''}</div>
+  <div class="spot">💰 下单时 BTC: ${spot:,.0f} &nbsp;|&nbsp; 📈 {self._simplify_instrument(call_inst)}</div>
+  <div class="changes">{chg_html}</div>
+  <div class="conclusion" style="color:{conc_color}">💡 {conclusion}</div>
+</div>"""
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新闻影响验证</title>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;padding:16px;background:#f0f2f5}}
+.container{{max-width:800px;margin:0 auto}}
+h1{{color:#333;font-size:22px;margin-bottom:4px}}
+.subtitle{{color:#888;font-size:13px;margin-bottom:16px}}
+.back-link{{display:inline-block;margin-bottom:16px;color:#007AFF;text-decoration:none;font-size:14px}}
+.card{{background:white;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+.card-header{{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;align-items:center}}
+.time{{color:#888;font-size:12px}}
+.score{{font-size:13px;font-weight:600;color:#FF9500}}
+.sentiment{{font-size:13px;color:#555}}
+.news{{font-size:14px;color:#333;line-height:1.5;margin-bottom:10px;padding:8px;background:#f8f9fa;border-radius:8px;border-left:3px solid #007AFF}}
+.spot{{font-size:12px;color:#888;margin-bottom:10px}}
+.changes{{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}}
+.chg{{background:#f8f9fa;border-radius:8px;padding:8px 12px;min-width:80px;text-align:center}}
+.chg.pending{{opacity:.5}}
+.label{{display:block;font-size:11px;color:#888;margin-bottom:3px}}
+.val{{display:block;font-size:16px;font-weight:700}}
+.conclusion{{font-size:14px;font-weight:600;padding:8px;background:#f8f9fa;border-radius:8px}}
+.empty{{text-align:center;padding:40px;color:#aaa}}
+.count{{background:#007AFF;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px}}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back-link">← 返回首页</a>
+  <h1>🔍 新闻事后影响验证 <span class="count">{len(items)}</span></h1>
+  <div class="subtitle">更新时间: {now_str} &nbsp;|&nbsp; 追踪新闻发布后 BTC 价格变化</div>
+  {cards_html}
+</div>
+</body>
+</html>"""
         return web.Response(text=html, content_type='text/html', charset='utf-8')
 
     def run(self):
