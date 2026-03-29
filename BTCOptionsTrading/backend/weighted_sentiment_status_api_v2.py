@@ -489,6 +489,7 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 .combo-id a{{color:#007AFF;text-decoration:none}}
 .be-range{{font-size:13px;color:#555;margin-top:6px;padding:6px 10px;background:#f8f9fa;border-radius:8px;border-left:3px solid #FF9500}}
 .be-lower,.be-upper{{font-weight:700;color:#333}}
+.be-note{{font-size:11px;color:#aaa;margin-left:6px}}
 .pnl{{font-size:15px;font-weight:700;margin-top:4px}}
 .empty{{text-align:center;padding:40px;color:#aaa;font-size:16px}}
 .count{{background:#007AFF;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px}}
@@ -578,18 +579,19 @@ function toggleOlder(el) {{
                     pass
             status = ''
             if in_profit is True:
-                status = ' <span style="color:#34C759;font-weight:700">✅ 当前盈利区间</span>'
+                status = ' <span style="color:#34C759;font-weight:700">✅ 到期可盈利</span>'
             elif in_profit is False:
-                status = ' <span style="color:#FF3B30;font-weight:700">❌ 当前亏损区间</span>'
+                status = ' <span style="color:#FF9500;font-weight:700">⏳ 需更大波动</span>'
             return (
-                f'<div class="be-range">📐 盈亏平衡: '
-                f'<span class="be-lower">&lt; ${be_lower:,.0f}</span>'
-                f' 或 '
-                f'<span class="be-upper">&gt; ${be_upper:,.0f}</span>'
-                f'{status}</div>'
+                f'<div class="be-range">📐 到期盈亏平衡: '
+                f'BTC &lt; <span class="be-lower">${be_lower:,.0f}</span>'
+                f' 或 &gt; '
+                f'<span class="be-upper">${be_upper:,.0f}</span>'
+                f'{status}'
+                f'<span class="be-note">（与当前PnL无关，仅指到期时）</span></div>'
             )
         except Exception:
-            return f'<div class="be-range">📐 盈亏平衡: {be_range}</div>'
+            return f'<div class="be-range">📐 到期盈亏平衡: {be_range}</div>'
 
     def _simplify_instrument(self, instrument_name: str) -> str:
         """简化合约名称显示
