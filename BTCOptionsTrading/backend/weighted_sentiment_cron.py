@@ -511,7 +511,119 @@ class StraddleExecutor:
         )
 
 
-class SimplifiedTradeLogger:
+class TradeFilter:
+    """下单前置过滤器
+    
+    四个条件全部满足才允许下单：
+    1. 新闻评分 >= 8
+    2. 当前 ATM 期权 IV < 55%
+    3. 过去 4 小时 IV 趋势向上（至少上涨 0.5%）
+    4. 同类新闻 48 小时内未触发过下单
+    """
+
+    IV_DB = Path(__file__).parent / "data" / "iv_history.db"
+    TRADE_LOG = Path(__file__).parent / "logs" / "weighted_sentiment_trades.log"
+
+    def __init__(self, executor: 'StraddleExecutor'):
+        self.executor = executor
+
+    async def check(self, news: 'WeightedNews', call_instrument: str, put_instrument: str) -> tuple[bool, str]:
+        """
+        Returns:
+            (allowed, reason) — allowed=True 表示可以下单
+        """
+        # ── 条件 1：评分 >= 8 ──────────────────────────────
+        if news.importance_score < 8:
+            return False, f"评分 {news.importance_score} < 8，跳过"
+
+        # ── 条件 2：当前 IV < 55% ──────────────────────────
+        call_iv = await self.executor.get_option_iv(call_instrument)
+        put_iv = await self.executor.get_option_iv(put_instrument)
+        avg_iv = (call_iv + put_iv) / 2 if call_iv and put_iv else call_iv or put_iv
+        if avg_iv >= 55:
+            return False, f"当前 IV={avg_iv:.1f}% >= 55%，IV 已在高位，跳过"
+
+        # ── 条件 3：过去 4 小时 IV 趋势向上 ──────────────────
+        iv_trend_ok, trend_msg = self._check_iv_trend(call_instrument)
+        if not iv_trend_ok:
+            return False, trend_msg
+
+        # ── 条件 4：同类新闻 48 小时内未触发 ─────────────────
+        dup_ok, dup_msg = self._check_duplicate(news)
+        if not dup_ok:
+            return False, dup_msg
+
+        return True, f"通过所有过滤条件（评分={news.importance_score}, IV={avg_iv:.1f}%）"
+
+    def _check_iv_trend(self, instrument: str) -> tuple[bool, str]:
+        """检查过去 4 小时 IV 是否趋势向上（至少 +0.5%）"""
+        if not self.IV_DB.exists():
+            # 没有 IV 数据库，放行（不阻止下单）
+            return True, "无 IV 历史数据，跳过趋势检查"
+        try:
+            import sqlite3
+            from datetime import timezone
+            now_ts = int(datetime.now(timezone.utc).timestamp())
+            four_h_ago = now_ts - 4 * 3600
+
+            conn = sqlite3.connect(self.IV_DB)
+            rows = conn.execute(
+                "SELECT ts, mark_iv FROM iv_snapshots "
+                "WHERE instrument=? AND ts >= ? ORDER BY ts",
+                (instrument, four_h_ago)
+            ).fetchall()
+            conn.close()
+
+            if len(rows) < 2:
+                return True, "IV 历史数据不足，跳过趋势检查"
+
+            iv_start = rows[0][1]
+            iv_end = rows[-1][1]
+            change = iv_end - iv_start
+
+            if change < 0.5:
+                return False, f"IV 趋势未向上（4h变化={change:+.2f}%），市场已定价，跳过"
+            return True, f"IV 趋势向上 {change:+.2f}%"
+        except Exception as e:
+            logger.warning(f"IV 趋势检查失败: {e}，放行")
+            return True, "IV 趋势检查异常，放行"
+
+    def _check_duplicate(self, news: 'WeightedNews') -> tuple[bool, str]:
+        """检查 48 小时内是否有同类新闻已触发下单"""
+        if not self.TRADE_LOG.exists():
+            return True, "无交易日志"
+        try:
+            content = self.TRADE_LOG.read_text(encoding='utf-8')
+            cutoff = datetime.now() - timedelta(hours=48)
+
+            # 提取关键词（取新闻内容前 20 字）
+            keywords = news.content[:20].strip()
+
+            for entry in content.split('=' * 80):
+                if '交易成功: True' not in entry:
+                    continue
+                # 解析交易时间
+                for line in entry.split('\n'):
+                    line = line.strip()
+                    if line.startswith('交易时间:'):
+                        try:
+                            trade_dt = datetime.fromisoformat(line.split(':', 1)[1].strip())
+                            if trade_dt < cutoff:
+                                break  # 超出 48h 窗口
+                            # 检查新闻内容是否相似
+                            if keywords and keywords in entry:
+                                return False, f"48h 内已有同类新闻触发下单，跳过"
+                        except Exception:
+                            pass
+                        break
+
+            return True, "无重复触发"
+        except Exception as e:
+            logger.warning(f"重复检查失败: {e}，放行")
+            return True, "重复检查异常，放行"
+
+
+
     """简化版交易日志记录器
     
     将交易记录写入日志文件，而不是数据库。
@@ -604,6 +716,7 @@ async def main():
         api_client = NewsAPIClient()
         news_tracker = NewsTracker()
         executor = StraddleExecutor()
+        trade_filter = TradeFilter(executor)
         trade_logger = SimplifiedTradeLogger()
         
         # 2. 获取新闻数据
@@ -634,14 +747,28 @@ async def main():
             logger.info(f"  评分: {news.importance_score}/10")
             
             try:
+                # 前置过滤：先查 ATM 合约，再检查四个条件
+                spot_price = await executor.get_spot_price()
+                call_inst, put_inst = await executor.find_atm_options(spot_price)
+
+                if not call_inst or not put_inst:
+                    logger.warning("  ✗ 未找到 ATM 合约，跳过")
+                    continue
+
+                allowed, reason = await trade_filter.check(news, call_inst, put_inst)
+                if not allowed:
+                    logger.info(f"  ⏭ 过滤条件不满足: {reason}")
+                    continue
+
+                logger.info(f"  ✓ 过滤通过: {reason}")
+
                 # 执行跨式交易
                 result = await executor.execute_straddle(news)
                 
-                # 获取IV数据（从日志中提取或重新获取）
+                # 获取IV数据
                 call_iv = 0.0
                 put_iv = 0.0
                 if result.success and result.call_option and result.put_option:
-                    # 重新获取IV
                     call_iv = await executor.get_option_iv(result.call_option.instrument_name)
                     put_iv = await executor.get_option_iv(result.put_option.instrument_name)
                 

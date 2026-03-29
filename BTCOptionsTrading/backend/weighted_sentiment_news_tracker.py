@@ -93,7 +93,7 @@ class NewsTracker:
         
         筛选条件：
         1. 新闻未被处理过（news_id 不在数据库中）
-        2. 重要性评分 >= 7
+        2. 重要性评分 >= 8
         
         Args:
             news_list: 新闻列表
@@ -130,7 +130,7 @@ class NewsTracker:
                 )
                 
                 # 检查新闻是否满足评分阈值
-                is_high_score = news.importance_score >= 7
+                is_high_score = news.importance_score >= 8
                 
                 # 只保留未处理且高分的新闻
                 if not is_processed and is_high_score:
