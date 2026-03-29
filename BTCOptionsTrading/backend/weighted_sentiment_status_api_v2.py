@@ -187,6 +187,8 @@ class MobileFriendlyStatusAPI:
                         position['虚拟交易'] = value == 'True'
                     elif key == 'Combo ID':
                         position['combo_id'] = value
+                    elif key == '盈亏平衡':
+                        position['盈亏平衡'] = value  # 格式: "$65000.00 ~ $68000.00"
                     elif key == '现货价格':
                         position['现货价格'] = value
                     elif key == '看涨期权':
@@ -318,6 +320,7 @@ class MobileFriendlyStatusAPI:
                     "📈 看涨": self._simplify_instrument(call_inst),
                     "📉 看跌": self._simplify_instrument(pos.get('看跌合约', '未知')),
                     "💵 成本": pos.get('总成本', '未知'),
+                    "📐 盈亏平衡": pos.get('盈亏平衡', '未记录'),
                     "📊 PnL": pnl_str,
                 }
                 if pnl_updated:
@@ -349,6 +352,7 @@ class MobileFriendlyStatusAPI:
         trade_time = pos.get('交易时间', '未知')
         call_inst = pos.get('看涨合约', '')
         combo_id = pos.get('combo_id', '')
+        be_range = pos.get('盈亏平衡', '')
         news_text = pos.get('新闻内容', '未知')
         sentiment = pos.get('情绪', '未知')
         score = pos.get('评分', '未知')
@@ -393,6 +397,7 @@ class MobileFriendlyStatusAPI:
   </div>
   <div class="cost">💵 成本: {total_cost}</div>
   {f'<div class="combo-id">🔗 Combo: <a href="https://www.deribit.com/combo/{combo_id}" target="_blank">{combo_id}</a></div>' if combo_id else ''}
+  {self._build_be_html(be_range, str(pnl.get('spot_price', '')) if pnl else '')}
   {pnl_html}
 </div>"""
 
@@ -447,6 +452,8 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 .cost{{font-size:15px;font-weight:600;color:#333;margin-top:8px}}
 .combo-id{{font-size:12px;color:#888;margin-top:4px}}
 .combo-id a{{color:#007AFF;text-decoration:none}}
+.be-range{{font-size:13px;color:#555;margin-top:6px;padding:6px 10px;background:#f8f9fa;border-radius:8px;border-left:3px solid #FF9500}}
+.be-lower,.be-upper{{font-weight:700;color:#333}}
 .pnl{{font-size:15px;font-weight:700;margin-top:4px}}
 .empty{{text-align:center;padding:40px;color:#aaa;font-size:16px}}
 .count{{background:#007AFF;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px}}
@@ -516,6 +523,38 @@ function toggleOlder(el) {{
             return json.loads(self.pnl_file.read_text(encoding='utf-8'))
         except Exception:
             return {}
+
+    def _build_be_html(self, be_range: str, current_spot: str = '') -> str:
+        """构建盈亏平衡点 HTML，并标注当前价格是否在盈利区间"""
+        if not be_range:
+            return ''
+        try:
+            # 格式: "$65000.00 ~ $68000.00"
+            parts = be_range.replace('$', '').replace(',', '').split('~')
+            be_lower = float(parts[0].strip())
+            be_upper = float(parts[1].strip())
+            # 尝试解析当前价格（来自 PnL 数据）
+            in_profit = None
+            if current_spot:
+                try:
+                    spot = float(str(current_spot).replace('$', '').replace(',', ''))
+                    in_profit = spot < be_lower or spot > be_upper
+                except Exception:
+                    pass
+            status = ''
+            if in_profit is True:
+                status = ' <span style="color:#34C759;font-weight:700">✅ 当前盈利区间</span>'
+            elif in_profit is False:
+                status = ' <span style="color:#FF3B30;font-weight:700">❌ 当前亏损区间</span>'
+            return (
+                f'<div class="be-range">📐 盈亏平衡: '
+                f'<span class="be-lower">&lt; ${be_lower:,.0f}</span>'
+                f' 或 '
+                f'<span class="be-upper">&gt; ${be_upper:,.0f}</span>'
+                f'{status}</div>'
+            )
+        except Exception:
+            return f'<div class="be-range">📐 盈亏平衡: {be_range}</div>'
 
     def _simplify_instrument(self, instrument_name: str) -> str:
         """简化合约名称显示

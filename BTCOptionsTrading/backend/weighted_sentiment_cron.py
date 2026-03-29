@@ -554,10 +554,16 @@ class SimplifiedTradeLogger:
             # 提取 combo_id（格式 COMBO:xxx）
             call_oid = result.call_option.order_id or ''
             combo_id = call_oid[6:] if call_oid.startswith('COMBO:') else ''
+            # 盈亏平衡点：执行价 ± 总权利金(USD)
+            strike = result.call_option.strike_price
+            total_premium_usd = (call_entry_btc + put_entry_btc) * result.spot_price
+            be_upper = strike + total_premium_usd
+            be_lower = strike - total_premium_usd
             log_entry += (
                 f"虚拟交易: {'True' if is_virtual else 'False'}\n"
                 f"现货价格: ${result.spot_price:.2f}\n"
                 + (f"Combo ID: {combo_id}\n" if combo_id else "")
+                + f"盈亏平衡: ${be_lower:.2f} ~ ${be_upper:.2f}\n"
                 + f"看涨期权: {result.call_option.instrument_name}\n"
                 f"  执行价: ${result.call_option.strike_price:.2f}\n"
                 f"  入场价(BTC): {call_entry_btc:.6f}\n"
