@@ -15,7 +15,7 @@ import aiohttp
 import sqlite3
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 logging.basicConfig(
@@ -48,6 +48,25 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_instrument_ts ON iv_snapshots(instrument, ts)")
     conn.commit()
     conn.close()
+
+
+def is_expired(instrument: str) -> bool:
+    """判断合约是否已到期（解析合约名中的到期日）
+    
+    格式: BTC-23MAR26-70500-C -> 到期日 23 MAR 2026 UTC 08:00
+    Deribit 期权到期时间为 UTC 08:00
+    """
+    try:
+        # 提取日期部分，如 "23MAR26"
+        m = re.search(r'BTC-(\d{1,2})([A-Z]{3})(\d{2})-', instrument)
+        if not m:
+            return False
+        day, mon_str, yr2 = m.group(1), m.group(2), m.group(3)
+        expiry = datetime.strptime(f"{day}{mon_str}20{yr2} 08:00", "%d%b%Y %H:%M")
+        expiry = expiry.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= expiry
+    except Exception:
+        return False
 
 
 def get_active_instruments() -> list[str]:
@@ -126,6 +145,10 @@ async def collect():
         spot = await fetch_spot(session)
 
         for inst in instruments:
+            if is_expired(inst):
+                logger.info(f"  {inst}: 已到期，跳过")
+                continue
+
             ticker = await fetch_ticker(session, inst)
             mark_iv = ticker['mark_iv']
             mark_price = ticker['mark_price']
