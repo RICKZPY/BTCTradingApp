@@ -708,50 +708,48 @@ class TradeFilter:
 
 
 async def main():
-    """主函数：执行每小时检查和交易流程"""
-    logger.info("="*80)
-    logger.info("加权情绪跨式期权交易 - Cron Job 开始执行")
-    logger.info(f"执行时间: {datetime.now().isoformat()}")
-    logger.info("="*80)
-    
+    """主函数：执行新闻监听和交易流程（每分钟触发）"""
+    # ── 防重入锁：避免上一次还没跑完下一次就启动 ──────────
+    lock_file = Path(__file__).parent / "logs" / ".cron_running.lock"
+    if lock_file.exists():
+        # 检查锁文件是否超过 5 分钟（防止异常退出后锁文件残留）
+        import time
+        if time.time() - lock_file.stat().st_mtime < 300:
+            logger.debug("上一次执行尚未完成，跳过本次")
+            return
+    lock_file.touch()
     try:
-        # 1. 初始化组件
-        logger.info("初始化组件...")
+        await _main()
+    finally:
+        lock_file.unlink(missing_ok=True)
+
+
+
+async def _main():
+    """内部主函数：每分钟轮询，发现新高分新闻即评估下单"""
+    logger.debug(f"轮询: {datetime.now().strftime('%H:%M:%S')}")
+    try:
         api_client = NewsAPIClient()
         news_tracker = NewsTracker()
         executor = StraddleExecutor()
         trade_filter = TradeFilter(executor)
         trade_logger = SimplifiedTradeLogger()
-        
-        # 2. 获取新闻数据
-        logger.info("获取新闻数据...")
+
         news_list = await api_client.fetch_weighted_news()
-        logger.info(f"获取到 {len(news_list)} 条新闻")
-        
         if not news_list:
-            logger.info("没有新闻数据，结束执行")
             return
-        
-        # 3. 识别新的高分新闻
-        logger.info("识别新的高分新闻（评分 >= 7）...")
+
         new_high_score_news = await news_tracker.identify_new_news(news_list)
-        logger.info(f"识别到 {len(new_high_score_news)} 条新的高分新闻")
-        
+
         if not new_high_score_news:
-            logger.info("没有新的高分新闻，结束执行")
-            # 仍然更新历史，标记所有新闻为已处理
             await news_tracker.update_history(news_list)
             return
-        
-        # 4. 对每条高分新闻执行交易
-        logger.info("开始执行交易...")
+
+        logger.info(f"发现 {len(new_high_score_news)} 条新的高分新闻，开始评估...")
+
         for news in new_high_score_news:
-            logger.info(f"\n处理新闻: {news.news_id}")
-            logger.info(f"  内容: {news.content[:80]}...")
-            logger.info(f"  评分: {news.importance_score}/10")
-            
+            logger.info(f"处理: [{news.importance_score}/10] {news.content[:60]}...")
             try:
-                # 前置过滤：先查 ATM 合约，再检查四个条件
                 spot_price = await executor.get_spot_price()
                 call_inst, put_inst = await executor.find_atm_options(spot_price)
 
@@ -761,54 +759,32 @@ async def main():
 
                 allowed, reason = await trade_filter.check(news, call_inst, put_inst)
                 if not allowed:
-                    logger.info(f"  ⏭ 过滤条件不满足: {reason}")
+                    logger.info(f"  ⏭ {reason}")
                     continue
 
                 logger.info(f"  ✓ 过滤通过: {reason}")
-
-                # 执行跨式交易
                 result = await executor.execute_straddle(news)
-                
-                # 获取IV数据
-                call_iv = 0.0
-                put_iv = 0.0
+
+                call_iv, put_iv = 0.0, 0.0
                 if result.success and result.call_option and result.put_option:
                     call_iv = await executor.get_option_iv(result.call_option.instrument_name)
                     put_iv = await executor.get_option_iv(result.put_option.instrument_name)
-                
-                # 记录交易（包含IV）
+
                 await trade_logger.log_trade(news, result, call_iv, put_iv)
-                
+
                 if result.success:
-                    logger.info(f"  ✓ 交易成功")
+                    logger.info(f"  ✓ 下单成功: {result.call_option.instrument_name} | ${result.total_cost:.2f}")
                 else:
-                    logger.warning(f"  ✗ 交易失败: {result.error_message}")
-            
+                    logger.warning(f"  ✗ 下单失败: {result.error_message}")
+
             except Exception as e:
                 logger.error(f"  ✗ 处理新闻时发生错误: {e}", exc_info=True)
-        
-        # 5. 更新新闻历史
-        logger.info("\n更新新闻历史...")
+
         await news_tracker.update_history(news_list)
-        logger.info("新闻历史更新完成")
-        
-        # 6. 显示统计信息
-        total_history = news_tracker.get_history_count()
-        logger.info(f"\n统计信息:")
-        logger.info(f"  历史新闻总数: {total_history}")
-        logger.info(f"  本次处理新闻: {len(news_list)}")
-        logger.info(f"  本次高分新闻: {len(new_high_score_news)}")
-        
+
     except Exception as e:
         logger.error(f"执行过程中发生错误: {e}", exc_info=True)
-        sys.exit(1)
-    
-    finally:
-        logger.info("="*80)
-        logger.info("Cron Job 执行完成")
-        logger.info("="*80)
 
 
 if __name__ == "__main__":
-    # 运行主函数
     asyncio.run(main())
