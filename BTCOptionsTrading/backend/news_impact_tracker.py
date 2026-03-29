@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 新闻事后影响追踪器
-News Impact Tracker - 追踪每条触发交易的新闻对 BTC 价格的实际影响
+News Impact Tracker - 追踪每条触发交易的新闻对 BTC 价格 + IV 的实际影响
 
 逻辑：
   - 以交易时间作为 T0（新闻触发下单时刻）
   - 查询 T+1h / T+4h / T+24h 的 BTC 价格（Deribit OHLC 1小时K线）
-  - 计算价格变化百分比，存入 data/news_impact.json
+  - 从 iv_history.db 查询同一合约在 T0 / T+1h / T+4h 的 IV 变化
+  - 综合价格变化 + IV 变化生成 straddle 有效性结论
 
 Cron 配置（每小时跑一次，补全未完成的数据点）：
     0 * * * * cd /root/BTCTradingApp/BTCOptionsTrading/backend && venv/bin/python3 news_impact_tracker.py >> logs/news_impact.log 2>&1
@@ -16,8 +17,8 @@ import asyncio
 import aiohttp
 import json
 import logging
-import re
-from datetime import datetime, timezone, timedelta
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,6 +28,7 @@ MAINNET_URL = "https://www.deribit.com/api/v2"
 BASE_DIR = Path(__file__).parent
 TRADE_LOG = BASE_DIR / "logs" / "weighted_sentiment_trades.log"
 IMPACT_FILE = BASE_DIR / "data" / "news_impact.json"
+IV_DB = BASE_DIR / "data" / "iv_history.db"
 
 CHECKPOINTS = [1, 4, 24]  # 小时
 
@@ -109,33 +111,84 @@ async def fetch_btc_price_at(session: aiohttp.ClientSession, ts: int) -> float:
     return 0.0
 
 
-def get_conclusion(changes: dict) -> str:
-    """根据价格变化生成结论"""
-    vals = [v for v in changes.values() if v is not None]
-    if not vals:
+def get_iv_changes(instrument: str, t0_ts: int) -> dict:
+    """从 iv_history.db 查询合约在 T0 / T+1h / T+4h 的 IV 值及变化"""
+    if not IV_DB.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(IV_DB)
+        # 查询 T0 前后 10 分钟 + T+1h + T+4h 的数据
+        rows = conn.execute(
+            "SELECT ts, mark_iv FROM iv_snapshots "
+            "WHERE instrument=? AND ts BETWEEN ? AND ? ORDER BY ts",
+            (instrument, t0_ts - 600, t0_ts + 4 * 3600 + 600)
+        ).fetchall()
+        conn.close()
+
+        if not rows:
+            return {}
+
+        # T0 最近点
+        t0_row = min(rows, key=lambda r: abs(r[0] - t0_ts))
+        iv0 = t0_row[1]
+
+        result = {"iv_at_t0": round(iv0, 2)}
+
+        for hours in [1, 4]:
+            target_ts = t0_ts + hours * 3600
+            nearby = [r for r in rows if abs(r[0] - target_ts) < 600]
+            if nearby:
+                iv_n = min(nearby, key=lambda r: abs(r[0] - target_ts))[1]
+                result[f"iv_chg_t{hours}h"] = round(iv_n - iv0, 2)
+                result[f"iv_t{hours}h"] = round(iv_n, 2)
+
+        return result
+    except Exception as e:
+        logger.warning(f"查询 IV 数据失败 {instrument}: {e}")
+        return {}
+
+
+def get_conclusion(price_changes: dict, iv_changes: dict) -> str:
+    """综合价格变化 + IV 变化，生成 straddle 有效性结论"""
+    price_vals = [v for v in price_changes.values() if v is not None]
+    if not price_vals:
         return "数据不足"
 
-    max_abs = max(abs(v) for v in vals)
-    last = vals[-1]
+    max_price_abs = max(abs(v) for v in price_vals)
+    iv0 = iv_changes.get("iv_at_t0")
+    iv_chg_t1 = iv_changes.get("iv_chg_t1h")
+    iv_chg_t4 = iv_changes.get("iv_chg_t4h")
 
-    if max_abs < 1.0:
-        return f"该新闻未引发明显波动（最大变化 {max_abs:.1f}%）"
-    elif max_abs < 3.0:
-        direction = "上涨" if last > 0 else "下跌"
-        return f"轻微影响，价格{direction} {abs(last):.1f}%"
+    # 判断 IV 趋势
+    iv_rose = (iv_chg_t1 is not None and iv_chg_t1 > 1.0) or \
+              (iv_chg_t4 is not None and iv_chg_t4 > 1.5)
+    iv_fell = (iv_chg_t1 is not None and iv_chg_t1 < -1.0) or \
+              (iv_chg_t4 is not None and iv_chg_t4 < -1.5)
+    price_moved = max_price_abs >= 2.0
+    iv_was_high = iv0 is not None and iv0 >= 55
+
+    # 四象限结论
+    if iv_rose and price_moved:
+        return f"✅ 新闻有效：价格波动 {max_price_abs:.1f}% + IV 上升，straddle 双赢"
+    elif iv_rose and not price_moved:
+        return f"⚠️ IV 虚高陷阱：IV 上升但价格仅波动 {max_price_abs:.1f}%，vega 收益被 theta 抵消"
+    elif not iv_rose and price_moved:
+        if iv_fell:
+            return f"📉 靴子落地：价格波动 {max_price_abs:.1f}% 但 IV 下跌，delta 盈利被 vega 损失部分对冲"
+        return f"🔶 价格有效但 IV 未响应：波动 {max_price_abs:.1f}%，straddle 轻微盈利"
     else:
-        direction = "大幅上涨" if last > 0 else "大幅下跌"
-        return f"显著影响，价格{direction} {abs(last):.1f}%"
+        if iv_was_high:
+            return f"❌ 无效下单：IV 已在高位（{iv0:.0f}%）且价格仅波动 {max_price_abs:.1f}%，theta + vega 双亏"
+        return f"😐 新闻无效：价格仅波动 {max_price_abs:.1f}%，未引发明显波动"
 
 
 async def update_impact():
-    """主逻辑：补全所有交易的价格影响数据"""
+    """主逻辑：补全所有交易的价格影响 + IV 变化数据"""
     trades = parse_trades()
     if not trades:
         logger.info("没有交易记录，退出")
         return
 
-    # 加载已有数据
     impact_data = {}
     if IMPACT_FILE.exists():
         try:
@@ -149,9 +202,9 @@ async def update_impact():
     async with aiohttp.ClientSession() as session:
         for trade in trades:
             trade_time_str = trade['trade_time']
-            key = f"{trade_time_str[:16]}_{trade.get('call_instrument', '')}"
+            call_inst = trade.get('call_instrument', '')
+            key = f"{trade_time_str[:16]}_{call_inst}"
 
-            # 解析 T0 时间
             try:
                 t0 = datetime.fromisoformat(trade_time_str)
                 if t0.tzinfo is None:
@@ -170,9 +223,10 @@ async def update_impact():
                     "news_content": trade.get('news_content', '')[:150],
                     "sentiment": trade.get('sentiment', ''),
                     "score": trade.get('score', ''),
-                    "call_instrument": trade.get('call_instrument', ''),
+                    "call_instrument": call_inst,
                     "spot_at_trade": spot_t0,
                     "price_changes": {},
+                    "iv_changes": {},
                     "conclusion": "待计算"
                 }
 
@@ -180,20 +234,15 @@ async def update_impact():
             changes = record.get('price_changes', {})
             needs_update = False
 
+            # ── 价格变化 ──────────────────────────────────────
             for hours in CHECKPOINTS:
                 label = f"T+{hours}h"
                 target_ts = t0_ts + hours * 3600
-                target_dt = datetime.fromtimestamp(target_ts, tz=timezone.utc)
-
-                # 时间点还没到，跳过
-                if now < target_dt:
+                if now < datetime.fromtimestamp(target_ts, tz=timezone.utc):
                     continue
-
-                # 已有数据且不为 None，跳过
                 if label in changes and changes[label] is not None:
                     continue
 
-                # 获取目标时间点价格
                 price = await fetch_btc_price_at(session, target_ts)
                 if price > 0 and spot_t0 > 0:
                     pct = (price - spot_t0) / spot_t0 * 100
@@ -201,16 +250,31 @@ async def update_impact():
                     logger.info(f"  {key[:30]}... {label}: {price:.0f} ({pct:+.2f}%)")
                     needs_update = True
                 elif price > 0:
-                    changes[label] = None  # 没有 T0 价格，无法计算
+                    changes[label] = None
                     needs_update = True
+
+            # ── IV 变化（从本地 SQLite 查，无需网络）────────────
+            iv_changes = record.get('iv_changes', {})
+            if call_inst and not iv_changes.get('iv_at_t0'):
+                iv_data = get_iv_changes(call_inst, t0_ts)
+                if iv_data:
+                    iv_changes.update(iv_data)
+                    needs_update = True
+                    logger.info(
+                        f"  {key[:30]}... IV@T0={iv_data.get('iv_at_t0')}% "
+                        f"T+1h={iv_data.get('iv_chg_t1h'):+.2f}% "
+                        f"T+4h={iv_data.get('iv_chg_t4h', 'N/A')}"
+                        if iv_data.get('iv_chg_t1h') is not None else
+                        f"  {key[:30]}... IV@T0={iv_data.get('iv_at_t0')}%"
+                    )
 
             if needs_update:
                 record['price_changes'] = changes
-                record['conclusion'] = get_conclusion(changes)
+                record['iv_changes'] = iv_changes
+                record['conclusion'] = get_conclusion(changes, iv_changes)
                 record['updated_at'] = now.strftime("%Y-%m-%d %H:%M UTC")
                 updated += 1
 
-    # 保存
     IMPACT_FILE.parent.mkdir(exist_ok=True)
     IMPACT_FILE.write_text(json.dumps(impact_data, ensure_ascii=False, indent=2), encoding='utf-8')
     logger.info(f"完成，更新 {updated} 条，共 {len(impact_data)} 条记录")
