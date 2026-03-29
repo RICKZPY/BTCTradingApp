@@ -444,6 +444,12 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 .pnl{{font-size:15px;font-weight:700;margin-top:4px}}
 .empty{{text-align:center;padding:40px;color:#aaa;font-size:16px}}
 .count{{background:#007AFF;color:white;border-radius:12px;padding:2px 10px;font-size:13px;margin-left:8px}}
+.formula-box{{background:white;border-radius:12px;padding:14px 16px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.06);border-left:4px solid #FF9500}}
+.formula-title{{font-size:13px;font-weight:700;color:#FF9500;margin-bottom:10px}}
+.formula-row{{margin-bottom:8px;font-size:12px;line-height:1.6}}
+.formula-label{{display:inline-block;font-weight:700;color:#333;min-width:110px}}
+.formula-expr{{color:#555}}
+.formula-note{{display:block;color:#aaa;font-size:11px;margin-left:110px;margin-top:1px}}
 .older-toggle{{background:white;border-radius:10px;padding:14px 16px;margin-bottom:14px;
   box-shadow:0 2px 8px rgba(0,0,0,.06);cursor:pointer;color:#007AFF;font-size:14px;
   font-weight:600;text-align:center;border:1.5px dashed #007AFF}}
@@ -456,6 +462,23 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
   <a href="/" class="back-link">← 返回首页</a>
   <h1>💼 持仓记录 <span class="count">{len(positions)}</span></h1>
   <div class="subtitle">更新时间: {now_str}（显示最新 {min(RECENT_COUNT, len(positions))} 条）</div>
+  <div class="formula-box">
+    <div class="formula-title">📐 计算说明</div>
+    <div class="formula-row">
+      <span class="formula-label">💵 成本</span>
+      <span class="formula-expr">= (Call mark_price + Put mark_price) × 0.1 BTC × BTC现货价</span>
+      <span class="formula-note">例: (0.019 + 0.019) × 0.1 × $66,500 ≈ $252</span>
+    </div>
+    <div class="formula-row">
+      <span class="formula-label">📊 PnL</span>
+      <span class="formula-expr">= (当前 mark_price − 入场 mark_price) × 0.1 BTC × 当前BTC价</span>
+      <span class="formula-note">Call PnL + Put PnL，每日 UTC 00:00 / 04:00 / 08:00 / 12:00 / 16:00 / 20:00 更新</span>
+    </div>
+    <div class="formula-row">
+      <span class="formula-label">⚠️ 与Deribit差异</span>
+      <span class="formula-expr">Deribit 界面按 1 BTC 面值显示，我们下单 0.1 BTC，故成本约为 Deribit 显示的 1/10</span>
+    </div>
+  </div>
   {recent_html}
   {older_section}
 </div>
