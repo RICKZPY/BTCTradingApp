@@ -60,6 +60,7 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/api/iv-history', self.handle_iv_history)
         self.app.router.add_get('/api/iv-detail', self.handle_iv_detail)
         self.app.router.add_get('/api/news-impact', self.handle_news_impact)
+        self.app.router.add_post('/webhook/news', self.handle_news_webhook)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
         self.app.router.add_get('/news-impact', self.handle_news_impact_page)
@@ -1182,6 +1183,105 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 </body>
 </html>"""
         return web.Response(text=html, content_type='text/html', charset='utf-8')
+
+    async def handle_news_webhook(self, request):
+        """接收情绪 API 服务器推送的新高分新闻，立即触发下单评估"""
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        news_items = payload.get('news', [])
+        if not news_items:
+            return web.json_response({"received": 0})
+
+        logger.info(f"Webhook 收到 {len(news_items)} 条新闻，启动下单评估...")
+
+        # 异步触发下单流程，不阻塞 webhook 响应
+        asyncio.create_task(self._process_webhook_news(news_items))
+
+        return web.json_response({"received": len(news_items), "status": "processing"})
+
+    async def _process_webhook_news(self, news_items: list):
+        """处理 webhook 推送的新闻，执行下单评估"""
+        import sys
+        sys.path.insert(0, str(BASE_DIR))
+        try:
+            from weighted_sentiment_cron import StraddleExecutor, SimplifiedTradeLogger, TradeFilter
+            from weighted_sentiment_news_tracker import NewsTracker
+            from weighted_sentiment_models import WeightedNews
+            from datetime import timezone
+            from dotenv import load_dotenv
+            load_dotenv(BASE_DIR / '.env')
+
+            news_tracker = NewsTracker()
+            executor = StraddleExecutor()
+            trade_filter = TradeFilter(executor)
+            trade_logger = SimplifiedTradeLogger()
+
+            # 转换为 WeightedNews 对象
+            news_list = []
+            for item in news_items:
+                try:
+                    score = float(item.get('importance_score', 0))
+                    sentiment_map = {'积极': 'positive', '正面': 'positive',
+                                     '负面': 'negative', '消极': 'negative',
+                                     '中立': 'neutral', 'positive': 'positive',
+                                     'negative': 'negative', 'neutral': 'neutral'}
+                    sentiment = sentiment_map.get(str(item.get('sentiment', '')), 'neutral')
+                    ts_str = item.get('published_at') or item.get('pubDate', '')
+                    try:
+                        ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                    except Exception:
+                        ts = datetime.now(timezone.utc)
+
+                    news_list.append(WeightedNews(
+                        news_id=item.get('guid', ''),
+                        content=item.get('title', ''),
+                        sentiment=sentiment,
+                        importance_score=score,
+                        timestamp=ts,
+                        has_similar_high_scores=bool(item.get('has_similar_high_scores', False)),
+                        event_category=str(item.get('event_category', ''))
+                    ))
+                except Exception as e:
+                    logger.warning(f"Webhook 新闻解析失败: {e}")
+
+            new_news = await news_tracker.identify_new_news(news_list)
+            if not new_news:
+                logger.info("Webhook: 无新的高分新闻")
+                await news_tracker.update_history(news_list)
+                return
+
+            for news in new_news:
+                logger.info(f"Webhook 处理: [{news.importance_score}/10] {news.content[:60]}...")
+                try:
+                    spot_price = await executor.get_spot_price()
+                    call_inst, put_inst = await executor.find_atm_options(spot_price)
+                    if not call_inst or not put_inst:
+                        continue
+
+                    allowed, reason = await trade_filter.check(news, call_inst, put_inst)
+                    if not allowed:
+                        logger.info(f"  ⏭ {reason}")
+                        continue
+
+                    logger.info(f"  ✓ 过滤通过，下单: {reason}")
+                    result = await executor.execute_straddle(news)
+                    call_iv, put_iv = 0.0, 0.0
+                    if result.success and result.call_option and result.put_option:
+                        call_iv = await executor.get_option_iv(result.call_option.instrument_name)
+                        put_iv = await executor.get_option_iv(result.put_option.instrument_name)
+                    await trade_logger.log_trade(news, result, call_iv, put_iv)
+                    if result.success:
+                        logger.info(f"  ✓ 下单成功: {result.call_option.instrument_name} | ${result.total_cost:.2f}")
+                except Exception as e:
+                    logger.error(f"  ✗ Webhook 下单失败: {e}", exc_info=True)
+
+            await news_tracker.update_history(news_list)
+
+        except Exception as e:
+            logger.error(f"Webhook 处理异常: {e}", exc_info=True)
 
     def run(self):
         """运行 API 服务器"""

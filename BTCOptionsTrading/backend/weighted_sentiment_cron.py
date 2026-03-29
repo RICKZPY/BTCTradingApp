@@ -627,7 +627,7 @@ class TradeFilter:
             return True, "重复检查异常，放行"
 
 
-
+class SimplifiedTradeLogger:
     """简化版交易日志记录器
     
     将交易记录写入日志文件，而不是数据库。
