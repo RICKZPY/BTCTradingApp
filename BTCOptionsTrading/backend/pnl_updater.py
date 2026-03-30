@@ -83,6 +83,11 @@ def parse_trade_log():
                     pos['total_cost'] = float(value.replace('$', '').replace(',', ''))
                 elif key == '虚拟交易':
                     pos['is_virtual'] = value == 'True'
+                elif key == '下单数量':
+                    try:
+                        pos['quantity'] = float(value.replace(' BTC', ''))
+                    except Exception:
+                        pass
 
             if 'call_instrument' in pos and 'put_instrument' in pos:
                 positions.append(pos)
@@ -209,7 +214,7 @@ async def update_pnl():
             call_entry = pos.get('call_entry_btc', 0.0)
             put_entry = pos.get('put_entry_btc', 0.0)
             entry_spot = pos.get('spot_price', spot_price)
-            quantity = 0.1
+            quantity = pos.get('quantity', 0.1)  # 从日志读取，旧记录默认 0.1
 
             # ── 判断是否已到期 ──────────────────────────────────
             expiry_dt = parse_expiry(call_inst)

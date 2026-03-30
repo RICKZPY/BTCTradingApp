@@ -188,6 +188,11 @@ class MobileFriendlyStatusAPI:
                         position['虚拟交易'] = value == 'True'
                     elif key == 'Combo ID':
                         position['combo_id'] = value
+                    elif key == '下单数量':
+                        try:
+                            position['quantity'] = float(value.replace(' BTC', ''))
+                        except Exception:
+                            pass
                     elif key == '盈亏平衡':
                         position['盈亏平衡'] = value  # 格式: "$65000.00 ~ $68000.00"
                     elif key == '现货价格':

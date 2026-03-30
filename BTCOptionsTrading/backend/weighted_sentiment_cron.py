@@ -352,7 +352,17 @@ class StraddleExecutor:
                 )
             
             # 5. 解析合约信息 + 下单（优先 combo 组合下单，失败回退分腿）
-            trade_amount = 0.1
+            # 目标总成本 $10,000，每条腿各 $5,000
+            TARGET_LEG_USD = 5000.0
+            MIN_AMOUNT = 0.1  # Deribit 最小单位
+            # 每条腿数量 = $5000 / (mark_price_btc × spot_price)，向上取整到 0.1
+            import math
+            if call_price > 0 and spot_price > 0:
+                raw_amount = TARGET_LEG_USD / (call_price * spot_price)
+                trade_amount = max(MIN_AMOUNT, round(math.ceil(raw_amount / MIN_AMOUNT) * MIN_AMOUNT, 1))
+            else:
+                trade_amount = MIN_AMOUNT
+            logger.info(f"目标每腿 ${TARGET_LEG_USD:.0f} → 数量: {trade_amount} BTC")
             import re
             call_match = re.search(r'BTC-(\d+[A-Z]{3}\d+)-(\d+)-C', call_instrument)
             call_strike = float(call_match.group(2)) if call_match else spot_price
@@ -680,6 +690,7 @@ class SimplifiedTradeLogger:
                 f"现货价格: ${result.spot_price:.2f}\n"
                 + (f"Combo ID: {combo_id}\n" if combo_id else "")
                 + f"盈亏平衡: ${be_lower:.2f} ~ ${be_upper:.2f}\n"
+                + f"下单数量: {trade_amount} BTC\n"
                 + f"看涨期权: {result.call_option.instrument_name}\n"
                 f"  执行价: ${result.call_option.strike_price:.2f}\n"
                 f"  入场价(BTC): {call_entry_btc:.6f}\n"
