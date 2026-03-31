@@ -521,6 +521,175 @@ class StraddleExecutor:
         )
 
 
+class CalendarSpreadExecutor:
+    """日历价差执行器
+    
+    策略：卖近期（+3天）ATM Straddle + 买远期（+7天）ATM Straddle
+    触发条件：近期 IV ≥ 50% 且 近期IV - 远期IV ≥ 3%
+    逻辑：近期 IV 被新闻推高，卖出收取溢价；远期 IV 相对便宜，买入保护
+    """
+
+    # IV 触发阈值
+    MIN_NEAR_IV = 50.0    # 近期 IV 至少 50%
+    MIN_IV_SPREAD = 3.0   # 近远期 IV 差至少 3%
+    TRADE_AMOUNT = 0.1    # 每条腿数量（calendar spread 用小仓位测试）
+
+    def __init__(self, straddle_executor: 'StraddleExecutor'):
+        self.ex = straddle_executor  # 复用认证和行情接口
+
+    async def check_and_execute(self, news: 'WeightedNews') -> Optional[dict]:
+        """检查条件并执行 Calendar Spread
+        
+        Returns:
+            成功时返回结果 dict，不满足条件或失败返回 None
+        """
+        if not await self.ex.authenticate():
+            return None
+
+        spot = await self.ex.get_spot_price()
+        if spot <= 0:
+            return None
+
+        # 查找近期（+3天）和远期（+7天）ATM 合约
+        near_call, near_put = await self._find_atm_by_days(spot, target_days=3)
+        far_call, far_put = await self._find_atm_by_days(spot, target_days=7)
+
+        if not all([near_call, near_put, far_call, far_put]):
+            logger.info("Calendar: 未找到合适的近期或远期合约")
+            return None
+
+        # 获取 IV
+        near_iv = await self.ex.get_option_iv(near_call)
+        far_iv = await self.ex.get_option_iv(far_call)
+        iv_spread = near_iv - far_iv
+
+        logger.info(f"Calendar IV 检查: 近期={near_iv:.1f}% 远期={far_iv:.1f}% 差={iv_spread:.1f}%")
+
+        if near_iv < self.MIN_NEAR_IV:
+            logger.info(f"Calendar: 近期 IV={near_iv:.1f}% < {self.MIN_NEAR_IV}%，不满足条件")
+            return None
+        if iv_spread < self.MIN_IV_SPREAD:
+            logger.info(f"Calendar: IV 期限差={iv_spread:.1f}% < {self.MIN_IV_SPREAD}%，不满足条件")
+            return None
+
+        logger.info(f"Calendar: 条件满足，执行下单")
+        logger.info(f"  卖出近期: {near_call} + {near_put}")
+        logger.info(f"  买入远期: {far_call} + {far_put}")
+
+        # 获取价格
+        near_call_price = await self.ex.get_option_price(near_call)
+        near_put_price = await self.ex.get_option_price(near_put)
+        far_call_price = await self.ex.get_option_price(far_call)
+        far_put_price = await self.ex.get_option_price(far_put)
+
+        # 净成本（买远期 - 卖近期），正数表示净支出
+        net_cost_btc = (far_call_price + far_put_price - near_call_price - near_put_price)
+        net_cost_usd = net_cost_btc * self.TRADE_AMOUNT * spot
+
+        # 下单：卖近期（sell），买远期（buy）
+        results = {}
+        try:
+            results['sell_near_call'] = await self.ex.trader.sell(near_call, self.TRADE_AMOUNT, order_type="market")
+            results['sell_near_put']  = await self.ex.trader.sell(near_put,  self.TRADE_AMOUNT, order_type="market")
+            results['buy_far_call']   = await self.ex.trader.buy(far_call,   self.TRADE_AMOUNT, order_type="market")
+            results['buy_far_put']    = await self.ex.trader.buy(far_put,    self.TRADE_AMOUNT, order_type="market")
+        except Exception as e:
+            logger.error(f"Calendar 下单异常: {e}")
+            return None
+
+        if not all(results.values()):
+            logger.warning("Calendar: 部分腿下单失败")
+            return None
+
+        result = {
+            "strategy": "calendar_spread",
+            "news_id": news.news_id,
+            "news_content": news.content[:100],
+            "trade_time": datetime.now().isoformat(),
+            "spot_price": spot,
+            "near_iv": near_iv,
+            "far_iv": far_iv,
+            "iv_spread": iv_spread,
+            "sell_near_call": near_call,
+            "sell_near_put": near_put,
+            "buy_far_call": far_call,
+            "buy_far_put": far_put,
+            "net_cost_usd": round(net_cost_usd, 2),
+            "amount": self.TRADE_AMOUNT,
+            "order_ids": {
+                "sell_near_call": results['sell_near_call'].get('order', {}).get('order_id'),
+                "sell_near_put":  results['sell_near_put'].get('order', {}).get('order_id'),
+                "buy_far_call":   results['buy_far_call'].get('order', {}).get('order_id'),
+                "buy_far_put":    results['buy_far_put'].get('order', {}).get('order_id'),
+            }
+        }
+
+        logger.info(f"✓ Calendar Spread 执行成功")
+        logger.info(f"  净成本: ${net_cost_usd:.2f} | IV差: {iv_spread:.1f}%")
+        return result
+
+    async def _find_atm_by_days(self, spot: float, target_days: int) -> tuple[Optional[str], Optional[str]]:
+        """查找距今 target_days 天最近的 ATM 合约"""
+        try:
+            url = f"{self.ex.mainnet_url}/public/get_instruments"
+            params = {"currency": "BTC", "kind": "option", "expired": "false"}
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    data = await resp.json()
+                    if 'result' not in data:
+                        return None, None
+
+                    now = datetime.now()
+                    target_expiry = now + timedelta(days=target_days)
+
+                    # 找最接近 target_days 的到期日
+                    expiries = set()
+                    for inst in data['result']:
+                        exp_ts = inst.get('expiration_timestamp')
+                        if exp_ts:
+                            expiries.add(datetime.fromtimestamp(exp_ts / 1000))
+
+                    future_expiries = sorted(e for e in expiries if e > now)
+                    if not future_expiries:
+                        return None, None
+
+                    chosen = min(future_expiries, key=lambda e: abs((e - target_expiry).total_seconds()))
+
+                    # 找 ATM
+                    calls, puts = [], []
+                    for inst in data['result']:
+                        exp_ts = inst.get('expiration_timestamp')
+                        if not exp_ts:
+                            continue
+                        if datetime.fromtimestamp(exp_ts / 1000).date() != chosen.date():
+                            continue
+                        strike = inst.get('strike')
+                        opt_type = inst.get('option_type')
+                        name = inst.get('instrument_name')
+                        if not all([strike, opt_type, name]):
+                            continue
+                        diff = abs(strike - spot)
+                        if opt_type == 'call':
+                            calls.append((name, strike, diff))
+                        elif opt_type == 'put':
+                            puts.append((name, strike, diff))
+
+                    if not calls or not puts:
+                        return None, None
+
+                    calls.sort(key=lambda x: x[2])
+                    puts.sort(key=lambda x: x[2])
+                    best_call = calls[0]
+                    same_strike_puts = [p for p in puts if p[1] == best_call[1]]
+                    best_put = same_strike_puts[0] if same_strike_puts else puts[0]
+
+                    logger.info(f"Calendar +{target_days}天: {best_call[0]} / {best_put[0]}")
+                    return best_call[0], best_put[0]
+        except Exception as e:
+            logger.error(f"查找 +{target_days}天合约失败: {e}")
+            return None, None
+
+
 class TradeFilter:
     """下单前置过滤器
     
@@ -717,6 +886,29 @@ class SimplifiedTradeLogger:
         
         logger.info(f"交易记录已保存: {news.news_id}")
 
+    async def log_calendar_trade(self, result: dict):
+        """记录 Calendar Spread 交易"""
+        cal_log_file = self.log_dir / "calendar_spread_trades.log"
+        import json
+        entry = (
+            f"\n{'='*80}\n"
+            f"策略: Calendar Spread\n"
+            f"交易时间: {result['trade_time']}\n"
+            f"新闻: {result['news_content']}\n"
+            f"现货价格: ${result['spot_price']:.2f}\n"
+            f"近期 IV: {result['near_iv']:.1f}%  远期 IV: {result['far_iv']:.1f}%  IV差: {result['iv_spread']:.1f}%\n"
+            f"卖出近期 Call: {result['sell_near_call']}  订单ID: {result['order_ids']['sell_near_call']}\n"
+            f"卖出近期 Put:  {result['sell_near_put']}  订单ID: {result['order_ids']['sell_near_put']}\n"
+            f"买入远期 Call: {result['buy_far_call']}  订单ID: {result['order_ids']['buy_far_call']}\n"
+            f"买入远期 Put:  {result['buy_far_put']}  订单ID: {result['order_ids']['buy_far_put']}\n"
+            f"净成本: ${result['net_cost_usd']:.2f}\n"
+            f"数量: {result['amount']} BTC\n"
+            f"{'='*80}\n"
+        )
+        with open(cal_log_file, 'a', encoding='utf-8') as f:
+            f.write(entry)
+        logger.info(f"Calendar Spread 记录已保存，净成本: ${result['net_cost_usd']:.2f}")
+
 
 async def main():
     """主函数：执行新闻监听和交易流程（每分钟触发）"""
@@ -743,6 +935,7 @@ async def _main():
         api_client = NewsAPIClient()
         news_tracker = NewsTracker()
         executor = StraddleExecutor()
+        calendar_executor = CalendarSpreadExecutor(executor)
         trade_filter = TradeFilter(executor)
         trade_logger = SimplifiedTradeLogger()
 
@@ -785,6 +978,13 @@ async def _main():
 
                 if result.success:
                     logger.info(f"  ✓ 下单成功: {result.call_option.instrument_name} | ${result.total_cost:.2f}")
+                    # 同时评估 Calendar Spread（独立策略，不影响主流程）
+                    try:
+                        cal_result = await calendar_executor.check_and_execute(news)
+                        if cal_result:
+                            await trade_logger.log_calendar_trade(cal_result)
+                    except Exception as ce:
+                        logger.warning(f"  Calendar Spread 评估失败（不影响主流程）: {ce}")
                 else:
                     logger.warning(f"  ✗ 下单失败: {result.error_message}")
 
