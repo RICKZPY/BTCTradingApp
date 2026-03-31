@@ -978,13 +978,22 @@ async def _main():
 
                 if result.success:
                     logger.info(f"  ✓ 下单成功: {result.call_option.instrument_name} | ${result.total_cost:.2f}")
-                    # 同时评估 Calendar Spread（独立策略，不影响主流程）
+                    # Calendar Spread（独立策略）
                     try:
                         cal_result = await calendar_executor.check_and_execute(news)
                         if cal_result:
                             await trade_logger.log_calendar_trade(cal_result)
                     except Exception as ce:
                         logger.warning(f"  Calendar Spread 评估失败（不影响主流程）: {ce}")
+                    # Vol Account Strategy（qCoXRSu6 账户）
+                    try:
+                        from vol_account_strategy import VolAccountStrategy
+                        vol = VolAccountStrategy()
+                        vol_result = await vol.execute(news.content, news.importance_score)
+                        if vol_result:
+                            logger.info(f"  ✓ Vol 账户下单成功: 收入 ${vol_result['total_premium_usd']:.2f}")
+                    except Exception as ve:
+                        logger.warning(f"  Vol 账户策略失败（不影响主流程）: {ve}")
                 else:
                     logger.warning(f"  ✗ 下单失败: {result.error_message}")
 

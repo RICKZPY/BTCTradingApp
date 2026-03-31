@@ -64,6 +64,8 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
         self.app.router.add_get('/news-impact', self.handle_news_impact_page)
+        self.app.router.add_get('/vol-account', self.handle_vol_account)
+        self.app.router.add_get('/api/vol-account', self.handle_vol_account_api)
         self.app.router.add_get('/', self.handle_root)
     
     async def handle_root(self, request):
@@ -129,6 +131,12 @@ class MobileFriendlyStatusAPI:
                     <h3>🔍 新闻事后影响验证</h3>
                     <p>追踪每条触发交易的新闻对 BTC 价格的实际影响（T+1h/4h/24h）</p>
                     <p><a href="/news-impact">查看验证 →</a> &nbsp; <a href="/api/news-impact">JSON →</a></p>
+                </div>
+                
+                <div class="endpoint">
+                    <h3>⚡ Vol 账户持仓（qCoXRSu6）</h3>
+                    <p>IV Reversion 策略 - 卖出 OTM Strangle，收取高 IV 权利金</p>
+                    <p><a href="/vol-account">查看持仓 →</a> &nbsp; <a href="/api/vol-account">JSON →</a></p>
                 </div>
             </div>
         </body>
@@ -1361,6 +1369,232 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 
         return web.json_response({"received": len(news_items), "status": "processing"})
 
+    async def handle_vol_account_api(self, request):
+        """Vol 账户 JSON API"""
+        try:
+            import sys
+            sys.path.insert(0, str(BASE_DIR))
+            from vol_account_strategy import VolAccountStrategy
+            vol = VolAccountStrategy()
+
+            summary = await vol.get_account_summary()
+            positions = await vol.get_positions()
+
+            # 解析历史交易日志
+            trade_log = BASE_DIR / "logs" / "vol_account_trades.log"
+            trades = []
+            if trade_log.exists():
+                content = trade_log.read_text(encoding='utf-8')
+                for entry in content.split('=' * 80):
+                    entry = entry.strip()
+                    if '策略: IV Reversion' not in entry:
+                        continue
+                    t = {}
+                    for line in entry.split('\n'):
+                        line = line.strip()
+                        if ':' not in line:
+                            continue
+                        k, v = line.split(':', 1)
+                        k, v = k.strip(), v.strip()
+                        if k == '交易时间':
+                            t['time'] = v
+                        elif k == '现货价格':
+                            t['spot'] = v
+                        elif k == 'ATM IV':
+                            t['atm_iv'] = v
+                        elif k == '卖出 OTM Call':
+                            t['call'] = v
+                        elif k == '卖出 OTM Put':
+                            t['put'] = v
+                        elif k == '总收入':
+                            t['premium'] = v
+                        elif k == '盈利区间':
+                            t['profit_range'] = v
+                        elif k == '触发新闻':
+                            t['news'] = v
+                    if t:
+                        trades.append(t)
+
+            return web.json_response({
+                "账户": "qCoXRSu6",
+                "策略": "IV Reversion (OTM Strangle)",
+                "余额_BTC": summary.get('balance', 0),
+                "可用_BTC": summary.get('available_funds', 0),
+                "当前持仓数": len(positions),
+                "当前持仓": [
+                    {
+                        "合约": p.get('instrument_name'),
+                        "方向": "卖出" if p.get('size', 0) < 0 else "买入",
+                        "数量": abs(p.get('size', 0)),
+                        "delta": round(p.get('delta', 0), 4),
+                        "浮动盈亏_BTC": round(p.get('floating_profit_loss', 0), 6),
+                    }
+                    for p in positions
+                ],
+                "历史交易": trades,
+                "查询时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }, dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+        except Exception as e:
+            logger.error(f"Vol 账户 API 错误: {e}")
+            return web.json_response({"错误": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+
+    async def handle_vol_account(self, request):
+        """Vol 账户持仓管理页面"""
+        try:
+            import sys
+            sys.path.insert(0, str(BASE_DIR))
+            from vol_account_strategy import VolAccountStrategy
+            vol = VolAccountStrategy()
+
+            summary = await vol.get_account_summary()
+            positions = await vol.get_positions()
+            balance = summary.get('balance', 0)
+            available = summary.get('available_funds', 0)
+            margin = summary.get('initial_margin', 0)
+
+            # 持仓卡片
+            pos_html = ''
+            if not positions:
+                pos_html = '<div class="empty">📭 当前无持仓</div>'
+            else:
+                for p in positions:
+                    name = p.get('instrument_name', '')
+                    size = p.get('size', 0)
+                    direction = '📉 卖出' if size < 0 else '📈 买入'
+                    delta = p.get('delta', 0)
+                    pnl = p.get('floating_profit_loss', 0)
+                    pnl_usd = pnl * 67000  # 估算
+                    pnl_color = '#34C759' if pnl >= 0 else '#FF3B30'
+                    sign = '+' if pnl >= 0 else ''
+                    pos_html += f"""
+    <div class="pos-card">
+      <div class="pos-name">{name}</div>
+      <div class="pos-row">
+    <span>{direction} {abs(size)} BTC</span>
+    <span>Delta: {delta:.4f}</span>
+    <span style="color:{pnl_color}">浮动PnL: {sign}{pnl:.6f} BTC ({sign}{pnl_usd:.0f} USD)</span>
+      </div>
+    </div>"""
+
+            # 历史交易
+            trade_log = BASE_DIR / "logs" / "vol_account_trades.log"
+            trades_html = ''
+            if trade_log.exists():
+                content = trade_log.read_text(encoding='utf-8')
+                entries = [e.strip() for e in content.split('=' * 80) if 'IV Reversion' in e]
+                for entry in reversed(entries[-10:]):
+                    lines = {k.strip(): v.strip() for line in entry.split('\n')
+                             if ':' in line for k, v in [line.split(':', 1)]}
+                    t_time = lines.get('交易时间', '')[:16]
+                    t_spot = lines.get('现货价格', '')
+                    t_iv = lines.get('ATM IV', '')
+                    t_call = lines.get('卖出 OTM Call', '')
+                    t_put = lines.get('卖出 OTM Put', '')
+                    t_prem = lines.get('总收入', '')
+                    t_range = lines.get('盈利区间', '')
+                    t_news = lines.get('触发新闻', '')[:80]
+                    trades_html += f"""
+    <div class="trade-card">
+      <div class="trade-header">
+    <span class="trade-time">🕐 {t_time}</span>
+    <span class="trade-prem">💰 收入: {t_prem}</span>
+      </div>
+      <div class="trade-news">📰 {t_news}</div>
+      <div class="trade-row">
+    <span>现货: {t_spot}</span>
+    <span>ATM IV: {t_iv}</span>
+      </div>
+      <div class="trade-row">
+    <span>📉 卖出 Call: {t_call}</span>
+    <span>📉 卖出 Put: {t_put}</span>
+      </div>
+      <div class="trade-range">📐 盈利区间: {t_range}</div>
+    </div>"""
+            if not trades_html:
+                trades_html = '<div class="empty">📭 暂无历史交易</div>'
+
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            html = f"""<!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vol 账户持仓</title>
+    <style>
+    body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;padding:16px;background:#f0f2f5}}
+    .container{{max-width:800px;margin:0 auto}}
+    h1{{color:#333;font-size:22px;margin-bottom:4px}}
+    .subtitle{{color:#888;font-size:13px;margin-bottom:16px}}
+    .back-link{{display:inline-block;margin-bottom:16px;color:#007AFF;text-decoration:none;font-size:14px}}
+    .account-box{{background:white;border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.08);border-left:4px solid #FF9500}}
+    .account-title{{font-size:13px;font-weight:700;color:#FF9500;margin-bottom:10px}}
+    .account-row{{display:flex;gap:20px;flex-wrap:wrap;font-size:14px}}
+    .account-item{{text-align:center}}
+    .account-label{{font-size:11px;color:#888}}
+    .account-value{{font-size:18px;font-weight:700;color:#333}}
+    .section-title{{font-size:16px;font-weight:700;color:#333;margin:16px 0 8px}}
+    .pos-card{{background:white;border-radius:10px;padding:12px 16px;margin-bottom:10px;box-shadow:0 2px 6px rgba(0,0,0,.06);border-left:3px solid #FF3B30}}
+    .pos-name{{font-size:14px;font-weight:700;color:#333;margin-bottom:6px}}
+    .pos-row{{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:#555}}
+    .trade-card{{background:white;border-radius:10px;padding:12px 16px;margin-bottom:10px;box-shadow:0 2px 6px rgba(0,0,0,.06)}}
+    .trade-header{{display:flex;justify-content:space-between;margin-bottom:8px}}
+    .trade-time{{font-size:12px;color:#888}}
+    .trade-prem{{font-size:14px;font-weight:700;color:#34C759}}
+    .trade-news{{font-size:13px;color:#555;margin-bottom:8px;padding:6px;background:#f8f9fa;border-radius:6px}}
+    .trade-row{{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#666;margin-bottom:4px}}
+    .trade-range{{font-size:13px;font-weight:600;color:#007AFF;margin-top:6px}}
+    .empty{{text-align:center;padding:30px;color:#aaa}}
+    .strategy-box{{background:#f8f9fa;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#555;border-left:3px solid #007AFF}}
+    </style>
+    </head>
+    <body>
+    <div class="container">
+      <a href="/" class="back-link">← 返回首页</a>
+      <h1>⚡ Vol 账户持仓管理</h1>
+      <div class="subtitle">账户: qCoXRSu6 | 更新时间: {now_str}</div>
+
+      <div class="strategy-box">
+    <strong>策略：IV Reversion (OTM Strangle)</strong><br>
+    当 ATM IV ≥ 55% 时，卖出 +5% OTM Call + 卖出 -5% OTM Put，收取高 IV 权利金。<br>
+    只要 BTC 在 ±5% 内到期，全部权利金归我们。
+      </div>
+
+      <div class="account-box">
+    <div class="account-title">📊 账户概览</div>
+    <div class="account-row">
+          <div class="account-item">
+        <div class="account-label">总余额</div>
+        <div class="account-value">{balance:.4f} BTC</div>
+          </div>
+          <div class="account-item">
+        <div class="account-label">可用资金</div>
+        <div class="account-value">{available:.4f} BTC</div>
+          </div>
+          <div class="account-item">
+        <div class="account-label">占用保证金</div>
+        <div class="account-value">{margin:.4f} BTC</div>
+          </div>
+          <div class="account-item">
+        <div class="account-label">当前持仓</div>
+        <div class="account-value">{len(positions)} 个</div>
+          </div>
+    </div>
+      </div>
+
+      <div class="section-title">📋 当前持仓</div>
+      {pos_html}
+
+      <div class="section-title">📜 历史交易（最近10笔）</div>
+      {trades_html}
+    </div>
+    </body>
+    </html>"""
+            return web.Response(text=html, content_type='text/html', charset='utf-8')
+        except Exception as e:
+            logger.error(f"Vol 账户页面错误: {e}")
+            return web.Response(text=f"<h1>错误: {e}</h1>", content_type='text/html', charset='utf-8')
+
     async def _process_webhook_news(self, news_items: list):
         """处理 webhook 推送的新闻，执行下单评估"""
         import sys
@@ -1378,7 +1612,6 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
             trade_filter = TradeFilter(executor)
             trade_logger = SimplifiedTradeLogger()
 
-            # 转换为 WeightedNews 对象
             news_list = []
             for item in news_items:
                 try:
@@ -1393,7 +1626,6 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
                         ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
                     except Exception:
                         ts = datetime.now(timezone.utc)
-
                     news_list.append(WeightedNews(
                         news_id=item.get('guid', ''),
                         content=item.get('title', ''),
@@ -1419,12 +1651,10 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
                     call_inst, put_inst = await executor.find_atm_options(spot_price)
                     if not call_inst or not put_inst:
                         continue
-
                     allowed, reason = await trade_filter.check(news, call_inst, put_inst)
                     if not allowed:
                         logger.info(f"  ⏭ {reason}")
                         continue
-
                     logger.info(f"  ✓ 过滤通过，下单: {reason}")
                     result = await executor.execute_straddle(news)
                     call_iv, put_iv = 0.0, 0.0
