@@ -26,6 +26,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -331,10 +332,6 @@ class VolAccountStrategy:
         if not await self.authenticate():
             return {}
         return await self._request("get_account_summary", {"currency": "BTC"})
-
-
-# 允许 Optional 类型提示
-from typing import Optional
 
 
 if __name__ == "__main__":
