@@ -422,6 +422,21 @@ class MobileFriendlyStatusAPI:
         sl = sentiment.lower()
         sentiment_emoji = '📈' if '看涨' in sentiment or 'bullish' in sl else ('📉' if '看跌' in sentiment or 'bearish' in sl else '😐')
 
+        # 生成唯一 card ID 用于图表
+        import hashlib
+        card_id = hashlib.md5(f"{trade_time[:16]}_{call_inst}".encode()).hexdigest()[:8]
+        # 只对未到期合约显示 IV 图
+        iv_chart_html = ''
+        if not is_settled and call_inst:
+            iv_chart_html = f"""
+  <div class="iv-toggle" onclick="toggleIV(this, '{card_id}', '{call_inst}', '{trade_time[:16]}')">
+    📈 查看 IV 走势图 ▼
+  </div>
+  <div id="iv-{card_id}" style="display:none;margin-top:8px">
+    <canvas id="canvas-{card_id}" height="120"></canvas>
+    <div id="iv-loading-{card_id}" style="text-align:center;color:#aaa;font-size:12px;padding:10px">加载中...</div>
+  </div>"""
+
         return f"""
 <div class="card">
   <div class="card-header">
@@ -443,6 +458,7 @@ class MobileFriendlyStatusAPI:
   {f'<div class="combo-id">🔗 Combo: <a href="https://www.deribit.com/combo/{combo_id}" target="_blank">{combo_id}</a></div>' if combo_id else ''}
   {'' if is_settled else self._build_be_html(be_range, str(pnl.get('spot_price', '')) if pnl else '')}
   {pnl_html}
+  {iv_chart_html}
 </div>"""
 
     async def handle_positions_html(self, request):
@@ -513,6 +529,8 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
   font-weight:600;text-align:center;border:1.5px dashed #007AFF}}
 .older-toggle:hover{{background:#f0f7ff}}
 .older-toggle.open{{border-style:solid}}
+.iv-toggle{{font-size:12px;color:#007AFF;cursor:pointer;margin-top:8px;padding:4px 0;border-top:1px solid #f0f2f5}}
+.iv-toggle:hover{{color:#0056CC}}
 </style>
 </head>
 <body>
@@ -551,6 +569,69 @@ function toggleOlder(el) {{
     ? '📦 收起历史记录（' + count + ' 条）▲'
     : '📦 展开历史记录（' + count + ' 条）▼';
 }}
+
+const ivCharts = {{}};
+async function toggleIV(el, cardId, instrument, tradeTime) {{
+  const div = document.getElementById('iv-' + cardId);
+  const hidden = div.style.display === 'none';
+  div.style.display = hidden ? 'block' : 'none';
+  el.textContent = hidden ? '📈 收起 IV 走势图 ▲' : '📈 查看 IV 走势图 ▼';
+  if (!hidden || ivCharts[cardId]) return;
+
+  const loading = document.getElementById('iv-loading-' + cardId);
+  try {{
+    const r = await fetch('/api/iv-detail?instrument=' + encodeURIComponent(instrument) + '&limit=2016');
+    const data = await r.json();
+    loading.style.display = 'none';
+    if (!data.数据 || data.数据.length === 0) {{
+      loading.textContent = '暂无 IV 数据';
+      loading.style.display = 'block';
+      return;
+    }}
+    // 只显示从下单时间开始的数据
+    const tradeTs = new Date(tradeTime).getTime();
+    const pts = data.数据.filter(p => p.ts * 1000 >= tradeTs - 300000);
+    if (pts.length === 0) {{
+      loading.textContent = '下单后暂无 IV 数据';
+      loading.style.display = 'block';
+      return;
+    }}
+    const ivData = pts.map(p => ({{x: p.ts * 1000, y: p.iv}}));
+    const ctx = document.getElementById('canvas-' + cardId).getContext('2d');
+    ivCharts[cardId] = new Chart(ctx, {{
+      type: 'line',
+      data: {{ datasets: [{{
+        label: instrument + ' IV(%)',
+        data: ivData,
+        borderColor: '#007AFF',
+        backgroundColor: 'rgba(0,122,255,0.06)',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.2,
+        fill: true
+      }}] }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{ legend: {{ display: false }},
+          tooltip: {{ callbacks: {{ title: items => new Date(items[0].parsed.x).toLocaleString('zh-CN') }} }}
+        }},
+        scales: {{
+          x: {{ type: 'time', time: {{ tooltipFormat: 'MM-dd HH:mm', displayFormats: {{ hour: 'MM-dd HH:mm' }} }},
+            ticks: {{ maxTicksLimit: 6, font: {{ size: 10 }} }} }},
+          y: {{ title: {{ display: true, text: 'IV(%)', font: {{ size: 10 }} }},
+            ticks: {{ font: {{ size: 10 }} }} }}
+        }}
+      }}
+    }});
+  }} catch(e) {{
+    loading.textContent = '加载失败: ' + e.message;
+    loading.style.display = 'block';
+  }}
+}}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 </script>
 </body>
 </html>"""
