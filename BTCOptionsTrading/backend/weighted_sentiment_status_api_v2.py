@@ -428,12 +428,25 @@ class MobileFriendlyStatusAPI:
         # 只对未到期合约显示 IV 图
         iv_chart_html = ''
         if not is_settled and call_inst:
+            # 解析盈亏平衡数值传给 JS
+            be_lower_val, be_upper_val = 0, 0
+            if be_range:
+                try:
+                    parts = be_range.replace('$', '').replace(',', '').split('~')
+                    be_lower_val = float(parts[0].strip())
+                    be_upper_val = float(parts[1].strip())
+                except Exception:
+                    pass
             iv_chart_html = f"""
-  <div class="iv-toggle" onclick="toggleIV(this, '{card_id}', '{call_inst}', '{trade_time[:16]}')">
-    📈 查看 IV 走势图 ▼
+  <div class="iv-toggle" onclick="toggleIV(this, '{card_id}', '{call_inst}', '{trade_time[:16]}', {be_lower_val}, {be_upper_val})">
+    📈 查看 IV + BTC 走势图 ▼
   </div>
   <div id="iv-{card_id}" style="display:none;margin-top:8px">
-    <canvas id="canvas-{card_id}" height="120"></canvas>
+    <div id="iv-tip-{card_id}" style="font-size:12px;font-weight:600;margin-bottom:4px"></div>
+    <div style="font-size:11px;color:#888;margin-bottom:4px">IV 走势</div>
+    <div style="position:relative;height:100px"><canvas id="canvas-iv-{card_id}"></canvas></div>
+    <div style="font-size:11px;color:#888;margin:8px 0 4px">BTC 价格（虚线=盈亏平衡区间）</div>
+    <div style="position:relative;height:120px"><canvas id="canvas-spot-{card_id}"></canvas></div>
     <div id="iv-loading-{card_id}" style="text-align:center;color:#aaa;font-size:12px;padding:10px">加载中...</div>
   </div>"""
 
@@ -571,7 +584,7 @@ function toggleOlder(el) {{
 }}
 
 const ivCharts = {{}};
-async function toggleIV(el, cardId, instrument, tradeTime) {{
+async function toggleIV(el, cardId, instrument, tradeTime, beLower, beUpper) {{
   const div = document.getElementById('iv-' + cardId);
   const hidden = div.style.display === 'none';
   div.style.display = hidden ? 'block' : 'none';
@@ -596,34 +609,94 @@ async function toggleIV(el, cardId, instrument, tradeTime) {{
       loading.style.display = 'block';
       return;
     }}
-    const ivData = pts.map(p => ({{x: p.ts * 1000, y: p.iv}}));
-    const ctx = document.getElementById('canvas-' + cardId).getContext('2d');
-    ivCharts[cardId] = new Chart(ctx, {{
+
+    const ivData   = pts.map(p => ({{x: p.ts * 1000, y: p.iv}}));
+    const spotData = pts.map(p => ({{x: p.ts * 1000, y: p.spot}}));
+
+    // ── IV 图 ──────────────────────────────────────────────
+    const ctx1 = document.getElementById('canvas-iv-' + cardId).getContext('2d');
+    new Chart(ctx1, {{
       type: 'line',
       data: {{ datasets: [{{
-        label: instrument + ' IV(%)',
+        label: 'IV (%)',
         data: ivData,
         borderColor: '#007AFF',
         backgroundColor: 'rgba(0,122,255,0.06)',
-        borderWidth: 1.5,
-        pointRadius: 0,
-        tension: 0.2,
-        fill: true
+        borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: true
       }}] }},
       options: {{
-        responsive: true,
-        maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false,
         plugins: {{ legend: {{ display: false }},
-          tooltip: {{ callbacks: {{ title: items => new Date(items[0].parsed.x).toLocaleString('zh-CN') }} }}
+          tooltip: {{ callbacks: {{ title: i => new Date(i[0].parsed.x).toLocaleString('zh-CN') }} }}
         }},
         scales: {{
           x: {{ type: 'time', time: {{ tooltipFormat: 'MM-dd HH:mm', displayFormats: {{ hour: 'MM-dd HH:mm' }} }},
-            ticks: {{ maxTicksLimit: 6, font: {{ size: 10 }} }} }},
+            ticks: {{ maxTicksLimit: 5, font: {{ size: 10 }} }} }},
           y: {{ title: {{ display: true, text: 'IV(%)', font: {{ size: 10 }} }},
             ticks: {{ font: {{ size: 10 }} }} }}
         }}
       }}
     }});
+
+    // ── BTC 价格图（含盈亏平衡线）──────────────────────────
+    const ctx2 = document.getElementById('canvas-spot-' + cardId).getContext('2d');
+    const spotMin = Math.min(...spotData.map(p=>p.y));
+    const spotMax = Math.max(...spotData.map(p=>p.y));
+    const yMin = Math.min(spotMin, beLower) * 0.998;
+    const yMax = Math.max(spotMax, beUpper) * 1.002;
+
+    // 判断是否曾进入盈利区间
+    const hadProfit = spotData.some(p => p.y < beLower || p.y > beUpper);
+
+    new Chart(ctx2, {{
+      type: 'line',
+      data: {{ datasets: [
+        {{
+          label: 'BTC 价格 ($)',
+          data: spotData,
+          borderColor: hadProfit ? '#34C759' : '#FF9500',
+          backgroundColor: 'rgba(0,0,0,0)',
+          borderWidth: 1.5, pointRadius: 0, tension: 0.2
+        }},
+        {{
+          label: '上限 $' + beUpper.toLocaleString(),
+          data: spotData.map(p => ({{x: p.x, y: beUpper}})),
+          borderColor: 'rgba(52,199,89,0.7)',
+          borderWidth: 1.5, borderDash: [5,3],
+          pointRadius: 0, fill: false
+        }},
+        {{
+          label: '下限 $' + beLower.toLocaleString(),
+          data: spotData.map(p => ({{x: p.x, y: beLower}})),
+          borderColor: 'rgba(52,199,89,0.7)',
+          borderWidth: 1.5, borderDash: [5,3],
+          pointRadius: 0, fill: false
+        }}
+      ] }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
+        plugins: {{
+          legend: {{ display: true, position: 'top', labels: {{ font: {{ size: 10 }} }} }},
+          tooltip: {{ callbacks: {{ title: i => new Date(i[0].parsed.x).toLocaleString('zh-CN') }} }},
+          annotation: hadProfit ? {{}} : {{}}
+        }},
+        scales: {{
+          x: {{ type: 'time', time: {{ tooltipFormat: 'MM-dd HH:mm', displayFormats: {{ hour: 'MM-dd HH:mm' }} }},
+            ticks: {{ maxTicksLimit: 5, font: {{ size: 10 }} }} }},
+          y: {{ min: yMin, max: yMax,
+            title: {{ display: true, text: 'BTC ($)', font: {{ size: 10 }} }},
+            ticks: {{ font: {{ size: 10 }}, callback: v => '$' + v.toLocaleString() }} }}
+        }}
+      }}
+    }});
+
+    // 盈利区间提示
+    if (hadProfit) {{
+      const tip = document.getElementById('iv-tip-' + cardId);
+      if (tip) {{ tip.textContent = '✅ 曾进入盈利区间'; tip.style.color = '#34C759'; }}
+    }}
+
+    ivCharts[cardId] = true;
   }} catch(e) {{
     loading.textContent = '加载失败: ' + e.message;
     loading.style.display = 'block';
