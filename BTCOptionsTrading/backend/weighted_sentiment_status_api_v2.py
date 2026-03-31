@@ -560,6 +560,24 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
   <h1>💼 持仓记录 <span class="count">{len(positions)}</span></h1>
   <div class="subtitle">更新时间: {now_str}（显示最新 {min(RECENT_COUNT, len(positions))} 条）</div>
   <div class="formula-box">
+    <div class="formula-title">🎯 主账户交易策略（0366QIa2）</div>
+    <div class="formula-row">
+      <span class="formula-label">策略一</span>
+      <span class="formula-expr">ATM Straddle — 测试新闻打分准确性，每次 8 分新闻触发时买入 ATM Straddle，$10,000 仓位</span>
+      <span class="formula-note">触发：评分 ≥ 8 | IV &lt; 55% | IV 趋势向上 | 48h 无重复</span>
+    </div>
+    <div class="formula-row">
+      <span class="formula-label">策略二</span>
+      <span class="formula-expr">Calendar Spread — 同一账户，当近远期 IV 差 ≥ 3% 时，卖近期买远期，净成本 $200-500</span>
+      <span class="formula-note">触发：近期 IV ≥ 50% 且 近远期 IV 差 ≥ 3%</span>
+    </div>
+    <div class="formula-row">
+      <span class="formula-label">Vol 账户</span>
+      <span class="formula-expr">IV Reversion（qCoXRSu6）— 卖出 ±5% OTM Strangle，收取高 IV 权利金</span>
+      <span class="formula-note">触发：ATM IV ≥ 55% | <a href="/vol-account" style="color:#007AFF">查看 Vol 账户持仓 →</a></span>
+    </div>
+  </div>
+  <div class="formula-box">
     <div class="formula-title">📐 计算说明</div>
     <div class="formula-row">
       <span class="formula-label">💵 成本</span>
