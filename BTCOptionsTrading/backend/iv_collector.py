@@ -135,7 +135,6 @@ async def collect():
     logger.info(f"采集 {len(instruments)} 个合约的 IV: {instruments}")
 
     now_ts = int(datetime.utcnow().timestamp())
-    # 对齐到5分钟整点，方便后续查询
     now_ts = (now_ts // 300) * 300
 
     init_db()
@@ -143,6 +142,19 @@ async def collect():
 
     async with aiohttp.ClientSession() as session:
         spot = await fetch_spot(session)
+
+        if spot <= 0:
+            # 现货价格获取失败，尝试从数据库取最近一条有效值
+            row = conn.execute(
+                "SELECT spot_price FROM iv_snapshots WHERE spot_price > 0 ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                spot = row[0]
+                logger.warning(f"现货价格获取失败，使用上次记录值: ${spot:.0f}")
+            else:
+                logger.error("无法获取现货价格且无历史记录，退出")
+                conn.close()
+                return
 
         for inst in instruments:
             if is_expired(inst):
