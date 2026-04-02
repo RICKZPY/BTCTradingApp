@@ -60,6 +60,7 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/api/iv-history', self.handle_iv_history)
         self.app.router.add_get('/api/iv-detail', self.handle_iv_detail)
         self.app.router.add_get('/api/news-impact', self.handle_news_impact)
+        self.app.router.add_get('/api/news-events', self.handle_news_events)
         self.app.router.add_post('/webhook/news', self.handle_news_webhook)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
@@ -1182,13 +1183,16 @@ if (urlInst) {{
             "  <span><span class=\"dot\" style=\"background:#FF3B30\"></span>交易成本</span>\n"
             "</div>\n"
             "<div class=\"chart-container\"><canvas id=\"ivChart\"></canvas></div>\n"
+            "<div id=\"news-panel\" style=\"display:none;background:white;border-radius:10px;padding:12px 16px;margin-top:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);font-size:13px\"></div>\n"
             "<div id=\"loading\" class=\"loading\">加载中...</div>\n"
             "</div>\n"
             "<script>\n"
+            "let _newsEvents=[];\n"
             "async function loadIVData(){\n"
             "  try{\n"
-            "    const r=await fetch('/api/iv-history');\n"
-            "    const data=await r.json();\n"
+            "    const [r1,r2]=await Promise.all([fetch('/api/iv-history'),fetch('/api/news-events?min_score=7')]);\n"
+            "    const data=await r1.json();\n"
+            "    const nd=await r2.json(); _newsEvents=nd.events||[];\n"
             "    const hasT=data.数据&&data.数据.length>0;\n"
             "    const hasD=data.DVOL&&data.DVOL.length>0;\n"
             "    if(!hasT&&!hasD){document.getElementById('loading').innerHTML='暂无数据';return;}\n"
@@ -1209,14 +1213,18 @@ if (urlInst) {{
             "    const ctx=document.getElementById('ivChart').getContext('2d');\n"
             "    new Chart(ctx,{type:'line',data:{datasets:[\n"
             "      {label:'BTC-DVOL 市场IV(%)',data:dvolPoints,borderColor:'#34C759',backgroundColor:'rgba(52,199,89,0.06)',borderWidth:1.5,pointRadius:0,tension:0.3,fill:false,yAxisID:'y',order:3},\n"
+            "      {label:'新闻事件',type:'scatter',data:(window._newsEvents||[]).map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y,s:e.score,t:e.content,u:e.news_id};}).filter(p=>p.y>0),pointBackgroundColor:function(c){const s=c.raw&&c.raw.s||0;return s>=10?'rgba(255,59,48,0.9)':s>=8?'rgba(255,149,0,0.9)':'rgba(255,204,0,0.85)';},pointRadius:function(c){const s=c.raw&&c.raw.s||0;return s>=10?9:s>=8?7:5;},pointHoverRadius:12,pointStyle:'triangle',showLine:false,yAxisID:'y',order:0},\n"
             "      {label:'交易 IV(%)',data:tradePoints,borderColor:'rgba(0,122,255,0.4)',borderWidth:1,borderDash:[4,4],pointBackgroundColor:ptColors,pointRadius:ptRadii,pointHoverRadius:9,showLine:true,tension:0,fill:false,yAxisID:'y',order:1},\n"
             "      {label:'交易成本($)',data:costPoints,borderColor:'#FF3B30',backgroundColor:'rgba(255,59,48,0.08)',borderWidth:1.5,pointRadius:4,tension:0.3,fill:true,yAxisID:'y1',order:2}\n"
             "    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},\n"
             "    plugins:{legend:{display:true,position:'top'},tooltip:{callbacks:{afterBody:function(items){\n"
             "      const ti=items.find(i=>i.dataset.label==='交易 IV(%)');\n"
             "      if(ti){const p=tradePoints[ti.dataIndex];if(p)return[(p.v?'🔮 虚拟':\'✅ 真实\')+' | '+p.n];}\n"
+            "      const ni=items.find(i=>i.dataset.label==='新闻事件');\n"
+            "      if(ni&&ni.raw){return['['+ni.raw.s+'/10] '+(ni.raw.t||'')];}\n"
             "      return[];\n"
             "    }}}},\n"
+            "    onClick:function(evt,els){const el=els.find(e=>e.datasetIndex===1);if(!el||!el.element)return;const p=el.element.$context.raw;if(!p)return;const em=p.s>=10?'🔴':p.s>=8?'🟠':'🟡';const panel=document.getElementById('news-panel');panel.style.display='block';panel.innerHTML='<b>'+em+' ['+p.s+'/10]</b> '+new Date(p.x).toLocaleString('zh-CN')+'<br><span style=\"color:#555\">'+(p.t||'（无摘要）')+'</span><br><a href=\"'+p.u+'\" target=\"_blank\" style=\"color:#007AFF;font-size:11px\">查看原文 →</a>';},\n"
             "    scales:{x:{type:'time',time:{tooltipFormat:'MM-dd HH:mm',displayFormats:{hour:'MM-dd HH:mm',day:'MM-dd'}}},\n"
             "    y:{type:'linear',position:'left',title:{display:true,text:'IV(%)'}},\n"
             "    y1:{type:'linear',position:'right',title:{display:true,text:'成本($)'},grid:{drawOnChartArea:false}}}\n"
@@ -1224,9 +1232,65 @@ if (urlInst) {{
             "  }catch(e){console.error(e);document.getElementById('loading').innerHTML='加载失败: '+e.message;}\n"
             "}\n"
             "loadIVData();setInterval(loadIVData,60000);\n"
+            "// 新闻标注：独立加载，叠加在图表上\n"
+            "async function loadNewsEvents(){\n"
+            "  try{\n"
+            "    const r=await fetch('/api/news-events?min_score=7');\n"
+            "    const d=await r.json();\n"
+            "    window._newsEvents=d.events||[];\n"
+            "  }catch(e){}\n"
+            "}\n"
+            "loadNewsEvents();\n"
             "</script></body></html>"
         )
         return web.Response(text=html, content_type='text/html', charset='utf-8')
+
+    async def handle_news_events(self, request):
+        """返回所有新闻事件（时间戳+分数+内容），用于 IV 图表标注"""
+        min_score = int(request.rel_url.query.get('min_score', 7))
+        try:
+            import sqlite3 as _sq
+            db_path = BASE_DIR / "data" / "weighted_news_history.db"
+            if not db_path.exists():
+                return web.json_response({"events": [], "count": 0},
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False))
+            conn = _sq.connect(db_path)
+            rows = conn.execute(
+                "SELECT news_id, timestamp, importance_score FROM news_history "
+                "WHERE importance_score >= ? ORDER BY timestamp",
+                (min_score,)
+            ).fetchall()
+            conn.close()
+            # 从 news_impact.json 补充内容
+            impact_map = {}
+            if self.impact_file.exists():
+                try:
+                    for item in json.loads(self.impact_file.read_text(encoding='utf-8')).values():
+                        nid = item.get('news_id', '')
+                        if nid:
+                            impact_map[nid] = item.get('news_content', '')
+                except Exception:
+                    pass
+            from datetime import timezone as _tz
+            events = []
+            for news_id, ts_str, score in rows:
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=_tz.utc)
+                    events.append({
+                        "ts": int(ts.timestamp() * 1000),
+                        "score": score,
+                        "news_id": news_id,
+                        "content": impact_map.get(news_id, '')[:80]
+                    })
+                except Exception:
+                    pass
+            return web.json_response({"events": events, "count": len(events)},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
 
     async def handle_news_impact(self, request):
         """返回新闻影响数据 JSON"""
