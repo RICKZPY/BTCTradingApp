@@ -435,7 +435,7 @@ class MobileFriendlyStatusAPI:
         card_id = hashlib.md5(f"{trade_time[:16]}_{call_inst}".encode()).hexdigest()[:8]
         # 只对未到期合约显示 IV 图
         iv_chart_html = ''
-        if not is_settled and call_inst:
+        if call_inst:
             # 解析盈亏平衡数值传给 JS
             be_lower_val, be_upper_val = 0, 0
             if be_range:
@@ -445,9 +445,10 @@ class MobileFriendlyStatusAPI:
                     be_upper_val = float(parts[1].strip())
                 except Exception:
                     pass
+            settled_label = ' <span style="font-size:10px;background:#888;color:white;padding:1px 5px;border-radius:6px;margin-left:4px">历史快照</span>' if is_settled else ''
             iv_chart_html = f"""
   <div class="iv-toggle" onclick="toggleIV(this, '{card_id}', '{call_inst}', '{trade_time[:16]}', {be_lower_val}, {be_upper_val})">
-    📈 查看 IV + BTC 走势图 ▼
+    📈 查看 IV + BTC 走势图 ▼{settled_label}
   </div>
   <div id="iv-{card_id}" style="display:none;margin-top:8px">
     <div id="iv-tip-{card_id}" style="font-size:12px;font-weight:600;margin-bottom:4px"></div>
