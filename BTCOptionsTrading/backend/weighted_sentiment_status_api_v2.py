@@ -805,31 +805,41 @@ async function toggleIV(el, cardId, instrument, tradeTime, beLower, beUpper) {{
         return instrument_name
     
     async def _fetch_dvol_history(self, start_ts: int, end_ts: int) -> list:
-        """从 Deribit 主网拉取 BTC-DVOL 历史数据（小时级别）"""
+        """从 Deribit 主网拉取 BTC-DVOL 历史数据（小时级别），自动分批处理长时间范围"""
+        all_data = []
+        BATCH_MS = 720 * 3600 * 1000  # 每批最多 720 小时（30天）
+        current_start = start_ts
         try:
-            url = "https://www.deribit.com/api/v2/public/get_volatility_index_data"
-            params = {
-                "currency": "BTC",
-                "start_timestamp": start_ts,
-                "end_timestamp": end_ts,
-                "resolution": "3600"  # 1小时
-            }
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    data = await resp.json()
-                    if 'result' in data and 'data' in data['result']:
-                        # 每条: [timestamp_ms, open, high, low, close]
-                        # DVOL 直接是百分比形式（53.06 = 53.06%），无需换算
-                        return [
-                            {
-                                "ts": row[0],
-                                "dvol": round(row[4], 2)  # close值，已是百分比
-                            }
-                            for row in data['result']['data']
-                        ]
+                while current_start < end_ts:
+                    current_end = min(current_start + BATCH_MS, end_ts)
+                    url = "https://www.deribit.com/api/v2/public/get_volatility_index_data"
+                    params = {
+                        "currency": "BTC",
+                        "start_timestamp": current_start,
+                        "end_timestamp": current_end,
+                        "resolution": "3600"
+                    }
+                    async with session.get(url, params=params,
+                                           timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        data = await resp.json()
+                        if 'result' in data and 'data' in data['result']:
+                            batch = [
+                                {"ts": row[0], "dvol": round(row[4], 2)}
+                                for row in data['result']['data']
+                            ]
+                            all_data.extend(batch)
+                    current_start = current_end + 1
         except Exception as e:
             logger.warning(f"获取 DVOL 历史数据失败: {e}")
-        return []
+        # 去重并排序
+        seen = set()
+        result = []
+        for d in sorted(all_data, key=lambda x: x['ts']):
+            if d['ts'] not in seen:
+                seen.add(d['ts'])
+                result.append(d)
+        return result
 
     async def handle_iv_history(self, request):
         """处理IV历史数据查询请求，附加 DVOL 市场背景数据"""
@@ -853,19 +863,32 @@ async function toggleIV(el, cardId, instrument, tradeTime, beLower, beUpper) {{
                     except Exception:
                         pass
 
-            # 计算 DVOL 查询时间范围（覆盖所有交易时间，前后各扩展 24 小时）
+            # 计算 DVOL 查询时间范围：从新闻历史最早记录到现在，覆盖完整研究周期
             dvol_data = []
-            if iv_history:
-                try:
+            try:
+                import sqlite3 as _sq3
+                news_db = BASE_DIR / "data" / "weighted_news_history.db"
+                earliest_ts = None
+                if news_db.exists():
+                    conn = _sq3.connect(news_db)
+                    row = conn.execute("SELECT MIN(timestamp) FROM news_history").fetchone()
+                    conn.close()
+                    if row and row[0]:
+                        try:
+                            earliest_dt = datetime.fromisoformat(row[0].replace('Z', '+00:00'))
+                            earliest_ts = int(earliest_dt.timestamp() * 1000)
+                        except Exception:
+                            pass
+                # 如果没有新闻历史，回退到交易记录时间
+                if earliest_ts is None and iv_history:
                     times = [datetime.fromisoformat(p['时间']) for p in iv_history]
-                    start_dt = min(times)
-                    end_dt = max(times)
-                    # 前后各扩展 24 小时，让 DVOL 曲线有上下文
-                    start_ts = int((start_dt.timestamp() - 86400) * 1000)
-                    end_ts = int((end_dt.timestamp() + 86400) * 1000)
-                    dvol_data = await self._fetch_dvol_history(start_ts, end_ts)
-                except Exception as e:
-                    logger.warning(f"计算 DVOL 时间范围失败: {e}")
+                    earliest_ts = int((min(times).timestamp() - 86400) * 1000)
+                if earliest_ts is None:
+                    earliest_ts = int((datetime.now().timestamp() - 30 * 86400) * 1000)
+                end_ts = int(datetime.now().timestamp() * 1000)
+                dvol_data = await self._fetch_dvol_history(earliest_ts, end_ts)
+            except Exception as e:
+                logger.warning(f"计算 DVOL 时间范围失败: {e}")
 
             return web.json_response(
                 {
@@ -1181,6 +1204,12 @@ if (urlInst) {{
             "  <span><span class=\"dot\" style=\"background:#007AFF\"></span>交易 IV（蓝=真实，灰=虚拟）</span>\n"
             "  <span><span class=\"dot\" style=\"background:#34C759\"></span>BTC-DVOL 市场整体 30日IV</span>\n"
             "  <span><span class=\"dot\" style=\"background:#FF3B30\"></span>交易成本</span>\n"
+            "  <span style=\"margin-left:8px\">新闻筛选：\n"
+            "    <button id=\"btn10\" onclick=\"filterNews(10)\" style=\"background:rgba(255,59,48,0.9);color:white;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px\">🔴 10分</button>\n"
+            "    <button id=\"btn8\" onclick=\"filterNews(8)\" style=\"background:rgba(255,149,0,0.9);color:white;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px\">🟠 8-9分</button>\n"
+            "    <button id=\"btn7\" onclick=\"filterNews(7)\" style=\"background:rgba(255,204,0,0.9);color:white;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px\">🟡 7分</button>\n"
+            "    <button id=\"btnAll\" onclick=\"filterNews(0)\" style=\"background:#888;color:white;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px\">全部</button>\n"
+            "  </span>\n"
             "</div>\n"
             "<div class=\"chart-container\"><canvas id=\"ivChart\"></canvas></div>\n"
             "<div id=\"news-panel\" style=\"display:none;background:white;border-radius:10px;padding:12px 16px;margin-top:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);font-size:13px\"></div>\n"
@@ -1213,7 +1242,7 @@ if (urlInst) {{
             "    const ctx=document.getElementById('ivChart').getContext('2d');\n"
             "    new Chart(ctx,{type:'line',data:{datasets:[\n"
             "      {label:'BTC-DVOL 市场IV(%)',data:dvolPoints,borderColor:'#34C759',backgroundColor:'rgba(52,199,89,0.06)',borderWidth:1.5,pointRadius:0,tension:0.3,fill:false,yAxisID:'y',order:3},\n"
-            "      {label:'新闻事件',type:'scatter',data:(window._newsEvents||[]).map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y,s:e.score,t:e.content,u:e.news_id};}).filter(p=>p.y>0),pointBackgroundColor:function(c){const s=c.raw&&c.raw.s||0;return s>=10?'rgba(255,59,48,0.9)':s>=8?'rgba(255,149,0,0.9)':'rgba(255,204,0,0.85)';},pointRadius:function(c){const s=c.raw&&c.raw.s||0;return s>=10?9:s>=8?7:5;},pointHoverRadius:12,pointStyle:'triangle',showLine:false,yAxisID:'y',order:0},\n"
+            "      {label:'新闻事件',type:'scatter',data:(window._newsEvents||[]).map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y,s:e.score,t:e.content,u:e.news_id};}).filter(p=>p.y>0&&(window._filterMin===0||p.s>=window._filterMin&&(window._filterMin===10?p.s===10:window._filterMin===8?p.s>=8&&p.s<10:p.s===7))),pointBackgroundColor:function(c){const s=c.raw&&c.raw.s||0;return s>=10?'rgba(255,59,48,0.9)':s>=8?'rgba(255,149,0,0.9)':'rgba(255,204,0,0.85)';},pointRadius:function(c){const s=c.raw&&c.raw.s||0;return s>=10?9:s>=8?7:5;},pointHoverRadius:12,pointStyle:'triangle',showLine:false,yAxisID:'y',order:0},\n"
             "      {label:'交易 IV(%)',data:tradePoints,borderColor:'rgba(0,122,255,0.4)',borderWidth:1,borderDash:[4,4],pointBackgroundColor:ptColors,pointRadius:ptRadii,pointHoverRadius:9,showLine:true,tension:0,fill:false,yAxisID:'y',order:1},\n"
             "      {label:'交易成本($)',data:costPoints,borderColor:'#FF3B30',backgroundColor:'rgba(255,59,48,0.08)',borderWidth:1.5,pointRadius:4,tension:0.3,fill:true,yAxisID:'y1',order:2}\n"
             "    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},\n"
@@ -1241,6 +1270,15 @@ if (urlInst) {{
             "  }catch(e){}\n"
             "}\n"
             "loadNewsEvents();\n"
+            "let _filterMin=0;\n"
+            "function filterNews(minScore){\n"
+            "  _filterMin=minScore;\n"
+            "  ['btn10','btn8','btn7','btnAll'].forEach(id=>document.getElementById(id).style.opacity='0.5');\n"
+            "  const active=minScore===10?'btn10':minScore===8?'btn8':minScore===7?'btn7':'btnAll';\n"
+            "  document.getElementById(active).style.opacity='1';\n"
+            "  // 重新加载图表\n"
+            "  loadIVData();\n"
+            "}\n"
             "</script></body></html>"
         )
         return web.Response(text=html, content_type='text/html', charset='utf-8')
