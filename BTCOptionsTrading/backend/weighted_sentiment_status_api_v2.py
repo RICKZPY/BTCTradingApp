@@ -61,6 +61,7 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/api/iv-detail', self.handle_iv_detail)
         self.app.router.add_get('/api/news-impact', self.handle_news_impact)
         self.app.router.add_get('/api/news-events', self.handle_news_events)
+        self.app.router.add_get('/api/news-events-v2', self.handle_news_events_v2)
         self.app.router.add_post('/webhook/news', self.handle_news_webhook)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
@@ -1204,6 +1205,7 @@ if (urlInst) {{
             "  <span><span class=\"dot\" style=\"background:#007AFF\"></span>交易 IV（蓝=真实，灰=虚拟）</span>\n"
             "  <span><span class=\"dot\" style=\"background:#34C759\"></span>BTC-DVOL 市场整体 30日IV</span>\n"
             "  <span><span class=\"dot\" style=\"background:#FF3B30\"></span>交易成本</span>\n"
+            "  <span>▲ 旧打分（5002）&nbsp; ● 新打分（5003，含novelty）</span>\n"
             "  <span style=\"margin-left:8px\">新闻筛选：\n"
             "    <button id=\"btn10\" onclick=\"filterNews(10)\" style=\"background:rgba(255,59,48,0.9);color:white;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px\">🔴 10分</button>\n"
             "    <button id=\"btn8\" onclick=\"filterNews(8)\" style=\"background:rgba(255,149,0,0.9);color:white;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px\">🟠 8-9分</button>\n"
@@ -1217,12 +1219,14 @@ if (urlInst) {{
             "</div>\n"
             "<script>\n"
             "let _newsEvents=[];\n"
+            "let _newsEventsV2=[];\n"
             "let _chart=null;\n"
             "async function loadIVData(){\n"
             "  try{\n"
-            "    const [r1,r2]=await Promise.all([fetch('/api/iv-history'),fetch('/api/news-events?min_score=7')]);\n"
+            "    const [r1,r2,r3]=await Promise.all([fetch('/api/iv-history'),fetch('/api/news-events?min_score=7'),fetch('/api/news-events-v2?min_score=7')]);\n"
             "    const data=await r1.json();\n"
             "    const nd=await r2.json(); _newsEvents=nd.events||[];\n"
+            "    const nd2=await r3.json(); _newsEventsV2=nd2.events||[];\n"
             "    const hasT=data.数据&&data.数据.length>0;\n"
             "    const hasD=data.DVOL&&data.DVOL.length>0;\n"
             "    if(!hasT&&!hasD){document.getElementById('loading').innerHTML='暂无数据';return;}\n"
@@ -1242,18 +1246,21 @@ if (urlInst) {{
             "    if(hasD){document.getElementById('current-dvol').textContent=dvolPoints[dvolPoints.length-1].y.toFixed(1)+'%';}\n"
             "    const ctx=document.getElementById('ivChart').getContext('2d');\n"
             "    const newsDataset=(window._newsEvents||[]).length>0?_newsEvents.map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y,s:e.score,t:e.content,u:e.news_id};}).filter(p=>p.y>0&&(_filterMin===0||p.s>=_filterMin&&(_filterMin===10?p.s===10:_filterMin===8?p.s>=8&&p.s<10:p.s===7))):[];\n"
+            "    const newsDatasetV2=_newsEventsV2.map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y*0.97,s:e.score,t:e.content,u:e.news_id,base:e.base_score,nov:e.novelty,mul:e.novelty_multiplier};}).filter(p=>p.y>0&&(_filterMin===0||p.s>=_filterMin&&(_filterMin===10?p.s===10:_filterMin===8?p.s>=8&&p.s<10:p.s===7)));\n"
             "    if(_chart){\n"
             "      _chart.data.datasets[0].data=dvolPoints;\n"
             "      _chart.data.datasets[1].data=newsDataset;\n"
-            "      _chart.data.datasets[2].data=tradePoints;\n"
-            "      _chart.data.datasets[2].pointBackgroundColor=ptColors;\n"
-            "      _chart.data.datasets[2].pointRadius=ptRadii;\n"
-            "      _chart.data.datasets[3].data=costPoints;\n"
+            "      _chart.data.datasets[2].data=newsDatasetV2;\n"
+            "      _chart.data.datasets[3].data=tradePoints;\n"
+            "      _chart.data.datasets[3].pointBackgroundColor=ptColors;\n"
+            "      _chart.data.datasets[3].pointRadius=ptRadii;\n"
+            "      _chart.data.datasets[4].data=costPoints;\n"
             "      _chart.update();\n"
             "    } else {\n"
             "    _chart=new Chart(ctx,{type:'line',data:{datasets:[\n"
             "      {label:'BTC-DVOL 市场IV(%)',data:dvolPoints,borderColor:'#34C759',backgroundColor:'rgba(52,199,89,0.06)',borderWidth:1.5,pointRadius:0,tension:0.3,fill:false,yAxisID:'y',order:3},\n"
             "      {label:'新闻事件',type:'scatter',data:newsDataset,pointBackgroundColor:function(c){const s=c.raw&&c.raw.s||0;return s>=10?'rgba(255,59,48,0.9)':s>=8?'rgba(255,149,0,0.9)':'rgba(255,204,0,0.85)';},pointRadius:function(c){const s=c.raw&&c.raw.s||0;return s>=10?9:s>=8?7:5;},pointHoverRadius:12,pointStyle:'triangle',showLine:false,yAxisID:'y',order:0},\n"
+            "      {label:'新闻事件(新打分)',type:'scatter',data:newsDatasetV2,pointBackgroundColor:function(c){const s=c.raw&&c.raw.s||0;return s>=10?'rgba(255,59,48,0.6)':s>=8?'rgba(255,149,0,0.6)':'rgba(255,204,0,0.6)';},pointRadius:function(c){const s=c.raw&&c.raw.s||0;return s>=10?9:s>=8?7:5;},pointHoverRadius:12,pointStyle:'circle',showLine:false,yAxisID:'y',order:0,hidden:false},\n"
             "      {label:'交易 IV(%)',data:tradePoints,borderColor:'rgba(0,122,255,0.4)',borderWidth:1,borderDash:[4,4],pointBackgroundColor:ptColors,pointRadius:ptRadii,pointHoverRadius:9,showLine:true,tension:0,fill:false,yAxisID:'y',order:1,hidden:true},\n"
             "      {label:'交易成本($)',data:costPoints,borderColor:'#FF3B30',backgroundColor:'rgba(255,59,48,0.08)',borderWidth:1.5,pointRadius:4,tension:0.3,fill:true,yAxisID:'y1',order:2,hidden:true}\n"
             "    ]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},\n"
@@ -1261,10 +1268,12 @@ if (urlInst) {{
             "      const ti=items.find(i=>i.dataset.label==='交易 IV(%)');\n"
             "      if(ti){const p=tradePoints[ti.dataIndex];if(p)return[(p.v?'🔮 虚拟':\'✅ 真实\')+' | '+p.n];}\n"
             "      const ni=items.find(i=>i.dataset.label==='新闻事件');\n"
-            "      if(ni&&ni.raw){return['['+ni.raw.s+'/10] '+(ni.raw.t||'')];}\n"
+            "      if(ni&&ni.raw){return['[旧打分 '+ni.raw.s+'/10] '+(ni.raw.t||'')];}\n"
+            "      const ni2=items.find(i=>i.dataset.label==='新闻事件(新打分)');\n"
+            "      if(ni2&&ni2.raw){const p=ni2.raw;return['[新打分 '+p.s+'/10] base='+p.base+' novelty='+p.nov+' ×'+p.mul,'  '+(p.t||'')];}\n"
             "      return[];\n"
             "    }}}},\n"
-            "    onClick:function(evt,els){const el=els.find(e=>e.datasetIndex===1);if(!el||!el.element)return;const p=el.element.$context.raw;if(!p)return;const em=p.s>=10?'🔴':p.s>=8?'🟠':'🟡';const panel=document.getElementById('news-panel');panel.style.display='block';panel.innerHTML='<b>'+em+' ['+p.s+'/10]</b> '+new Date(p.x).toLocaleString('zh-CN')+'<br><span style=\"color:#555\">'+(p.t||'（无摘要）')+'</span><br><a href=\"'+p.u+'\" target=\"_blank\" style=\"color:#007AFF;font-size:11px\">查看原文 →</a>';},\n"
+            "    onClick:function(evt,els){const el=els.find(e=>e.datasetIndex===1||e.datasetIndex===2);if(!el||!el.element)return;const p=el.element.$context.raw;if(!p)return;const em=p.s>=10?'🔴':p.s>=8?'🟠':'🟡';const isV2=el.datasetIndex===2;const panel=document.getElementById('news-panel');panel.style.display='block';let extra=isV2?'<br><span style=\"color:#888;font-size:11px\">新打分: base='+p.base+' novelty='+p.nov+' ×'+p.mul+'</span>':'';panel.innerHTML='<b>'+em+' ['+(isV2?'新':'旧')+' '+p.s+'/10]</b> '+new Date(p.x).toLocaleString('zh-CN')+'<br><span style=\"color:#555\">'+(p.t||'（无摘要）')+'</span>'+extra+'<br><a href=\"'+p.u+'\" target=\"_blank\" style=\"color:#007AFF;font-size:11px\">查看原文 →</a>';},\n"
             "    scales:{x:{type:'time',time:{tooltipFormat:'MM-dd HH:mm',displayFormats:{hour:'MM-dd HH:mm',day:'MM-dd'}}},\n"
             "    y:{type:'linear',position:'left',title:{display:true,text:'IV(%)'}},\n"
             "    y1:{type:'linear',position:'right',title:{display:true,text:'成本($)'},grid:{drawOnChartArea:false}}}\n"
@@ -1281,8 +1290,11 @@ if (urlInst) {{
             "  document.getElementById(active).style.opacity='1';\n"
             "  if(!_chart)return;\n"
             "  const dvolPoints=_chart.data.datasets[0].data;\n"
-            "  const filtered=_newsEvents.map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y,s:e.score,t:e.content,u:e.news_id};}).filter(p=>p.y>0&&(minScore===0||p.s>=minScore&&(minScore===10?p.s===10:minScore===8?p.s>=8&&p.s<10:p.s===7)));\n"
+            "  const filterFn=p=>p.y>0&&(minScore===0||p.s>=minScore&&(minScore===10?p.s===10:minScore===8?p.s>=8&&p.s<10:p.s===7));\n"
+            "  const filtered=_newsEvents.map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y,s:e.score,t:e.content,u:e.news_id};}).filter(filterFn);\n"
+            "  const filteredV2=_newsEventsV2.map(e=>{const c=dvolPoints.length?dvolPoints.reduce((a,b)=>Math.abs(b.x-e.ts)<Math.abs(a.x-e.ts)?b:a,dvolPoints[0]):{y:0};return{x:e.ts,y:c.y*0.97,s:e.score,t:e.content,u:e.news_id,base:e.base_score,nov:e.novelty,mul:e.novelty_multiplier};}).filter(filterFn);\n"
             "  _chart.data.datasets[1].data=filtered;\n"
+            "  _chart.data.datasets[2].data=filteredV2;\n"
             "  _chart.update();\n"
             "}\n"
             "</script></body></html>"
@@ -1334,6 +1346,44 @@ if (urlInst) {{
                 dumps=lambda o: json.dumps(o, ensure_ascii=False))
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+
+    async def handle_news_events_v2(self, request):
+        """从新打分接口（5003）实时拉取新闻，用于 IV 图表对比标注"""
+        min_score = float(request.rel_url.query.get('min_score', 7))
+        NEW_API = "http://43.106.51.106:5003/api/weighted-sentiment/news"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(NEW_API, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                    raw = await resp.json()
+            news_list = raw.get('data', {}).get('news', raw.get('news', []))
+            from datetime import timezone as _tz
+            events = []
+            for item in news_list:
+                score = float(item.get('importance_score', 0))
+                if score < min_score:
+                    continue
+                ts_str = item.get('published_at') or item.get('pubDate', '')
+                try:
+                    ts = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=_tz.utc)
+                    events.append({
+                        "ts": int(ts.timestamp() * 1000),
+                        "score": score,
+                        "base_score": item.get('base_score', ''),
+                        "novelty": item.get('novelty', ''),
+                        "novelty_multiplier": item.get('novelty_multiplier', ''),
+                        "news_id": item.get('guid', ''),
+                        "content": item.get('title', '')[:80]
+                    })
+                except Exception:
+                    pass
+            events.sort(key=lambda x: x['ts'])
+            return web.json_response({"events": events, "count": len(events)},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+        except Exception as e:
+            return web.json_response({"error": str(e), "events": [], "count": 0},
                 dumps=lambda o: json.dumps(o, ensure_ascii=False))
 
     async def handle_news_impact(self, request):
