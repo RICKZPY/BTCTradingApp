@@ -63,6 +63,7 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/api/news-events', self.handle_news_events)
         self.app.router.add_get('/api/news-events-v2', self.handle_news_events_v2)
         self.app.router.add_post('/webhook/news', self.handle_news_webhook)
+        self.app.router.add_post('/webhook/news-v3', self.handle_news_webhook_v3)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
         self.app.router.add_get('/news-impact', self.handle_news_impact_page)
@@ -1528,6 +1529,166 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 </body>
 </html>"""
         return web.Response(text=html, content_type='text/html', charset='utf-8')
+
+    async def handle_news_webhook_v3(self, request):
+        """接收 weight_extractor_v3 推送的新闻，用 vXkaBDto 账户执行策略
+        
+        触发条件（三维框架）：
+        - A（资金流动直接性）≥ 3（间接但快速传导以上）
+        - B（市场预期差）≥ 2（部分超预期以上）
+        - 总分 ≥ 7
+        - has_similar_high_scores = False
+        
+        策略：ATM Straddle，$5,000 仓位（测试账户）
+        """
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+
+        news_items = payload.get('news', [])
+        if not news_items:
+            return web.json_response({"received": 0})
+
+        logger.info(f"Webhook v3 收到 {len(news_items)} 条新闻")
+        asyncio.create_task(self._process_webhook_v3(news_items))
+        return web.json_response({"received": len(news_items), "status": "processing"})
+
+    async def _process_webhook_v3(self, news_items: list):
+        """处理 v3 新闻，用 vXkaBDto 账户执行 ATM Straddle"""
+        import sys, os
+        sys.path.insert(0, str(BASE_DIR))
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(BASE_DIR / '.env')
+            import aiohttp as _aio
+
+            TESTNET = "https://test.deribit.com/api/v2"
+            API_KEY = "vXkaBDto"
+            API_SECRET = "J54Ccsff9g5PlYK-ELRVunkvnST-cZ6puVBXbhwYrnY"
+            TARGET_LEG_USD = 2500.0  # 每腿 $2500，两腿合计 $5000
+            LOG_FILE = BASE_DIR / "logs" / "v3_trades.log"
+
+            # 认证
+            async with _aio.ClientSession() as session:
+                r = await session.get(f"{TESTNET}/public/auth", params={
+                    "grant_type": "client_credentials",
+                    "client_id": API_KEY, "client_secret": API_SECRET
+                })
+                d = await r.json()
+                if 'result' not in d:
+                    logger.error(f"v3 webhook 认证失败: {d}")
+                    return
+                token = d['result']['access_token']
+                headers = {"Authorization": f"Bearer {token}"}
+
+                # 获取现货价格
+                r2 = await session.get("https://www.deribit.com/api/v2/public/get_index_price",
+                                       params={"index_name": "btc_usd"})
+                spot = (await r2.json())['result']['index_price']
+
+            for item in news_items:
+                score = float(item.get('importance_score', 0))
+                a_score = int(item.get('capital_flow_directness_score', 0))
+                b_score = int(item.get('market_expectation_gap_score', 0))
+                similar = item.get('has_similar_high_scores', False)
+                title = item.get('title', '')[:80]
+                guid = item.get('guid', '')
+
+                # 过滤条件
+                if score < 7 or a_score < 3 or b_score < 2 or similar:
+                    logger.info(f"v3 跳过: score={score} A={a_score} B={b_score} similar={similar} | {title[:50]}")
+                    continue
+
+                logger.info(f"v3 触发下单: score={score} A={a_score} B={b_score} | {title}")
+
+                # 查找 ATM 合约（+3天）
+                from datetime import datetime, timedelta
+                now = datetime.now()
+                target = now + timedelta(days=3)
+
+                async with _aio.ClientSession() as session:
+                    r3 = await session.get("https://www.deribit.com/api/v2/public/get_instruments",
+                                           params={"currency": "BTC", "kind": "option", "expired": "false"})
+                    instruments = (await r3.json()).get('result', [])
+
+                expiries = set()
+                for inst in instruments:
+                    ts = inst.get('expiration_timestamp')
+                    if ts:
+                        expiries.add(datetime.fromtimestamp(ts / 1000))
+                future = sorted(e for e in expiries if e > now)
+                if not future:
+                    continue
+                chosen = min(future, key=lambda e: abs((e - target).total_seconds()))
+
+                calls, puts = [], []
+                for inst in instruments:
+                    ts = inst.get('expiration_timestamp')
+                    if not ts or datetime.fromtimestamp(ts / 1000).date() != chosen.date():
+                        continue
+                    strike = inst.get('strike', 0)
+                    name = inst.get('instrument_name', '')
+                    opt = inst.get('option_type', '')
+                    diff = abs(strike - spot)
+                    if opt == 'call':
+                        calls.append((name, strike, diff))
+                    elif opt == 'put':
+                        puts.append((name, strike, diff))
+
+                if not calls or not puts:
+                    continue
+                calls.sort(key=lambda x: x[2])
+                puts.sort(key=lambda x: x[2])
+                call_inst = calls[0][0]
+                put_inst = [p for p in puts if p[1] == calls[0][1]]
+                put_inst = put_inst[0][0] if put_inst else puts[0][0]
+
+                # 获取价格，计算数量
+                import math
+                async with _aio.ClientSession() as session:
+                    rc = await session.get("https://www.deribit.com/api/v2/public/ticker",
+                                           params={"instrument_name": call_inst})
+                    call_price = (await rc.json()).get('result', {}).get('mark_price', 0)
+
+                if call_price <= 0:
+                    continue
+                raw_amt = TARGET_LEG_USD / (call_price * spot)
+                amount = max(0.1, round(math.ceil(raw_amt / 0.1) * 0.1, 1))
+
+                # 下单
+                async with _aio.ClientSession() as session:
+                    rc = await session.get(f"{TESTNET}/private/buy",
+                        params={"instrument_name": call_inst, "amount": amount, "type": "market"},
+                        headers=headers)
+                    call_order = (await rc.json()).get('result', {})
+                    rp = await session.get(f"{TESTNET}/private/buy",
+                        params={"instrument_name": put_inst, "amount": amount, "type": "market"},
+                        headers=headers)
+                    put_order = (await rp.json()).get('result', {})
+
+                call_oid = call_order.get('order', {}).get('order_id', 'FAILED')
+                put_oid = put_order.get('order', {}).get('order_id', 'FAILED')
+                total_cost = call_price * 2 * amount * spot
+
+                log_entry = (
+                    f"\n{'='*80}\n"
+                    f"账户: {API_KEY} (v3策略)\n"
+                    f"交易时间: {datetime.now().isoformat()}\n"
+                    f"新闻: {title}\n"
+                    f"分数: {score}/10 | A={a_score} B={b_score}\n"
+                    f"现货: ${spot:,.2f}\n"
+                    f"看涨: {call_inst} | 订单: {call_oid}\n"
+                    f"看跌: {put_inst} | 订单: {put_oid}\n"
+                    f"数量: {amount} BTC | 估算成本: ${total_cost:.2f}\n"
+                    f"{'='*80}\n"
+                )
+                with open(LOG_FILE, 'a', encoding='utf-8') as f:
+                    f.write(log_entry)
+                logger.info(f"✓ v3 下单成功: {call_inst} + {put_inst} | ${total_cost:.2f}")
+
+        except Exception as e:
+            logger.error(f"v3 webhook 处理异常: {e}", exc_info=True)
 
     async def handle_news_webhook(self, request):
         """接收情绪 API 服务器推送的新高分新闻，立即触发下单评估"""
