@@ -114,12 +114,12 @@ async def fetch_btc_price_at(session: aiohttp.ClientSession, ts: int) -> float:
 
 
 def get_iv_changes(instrument: str, t0_ts: int) -> dict:
-    """从 iv_history.db 查询合约在 T0 / T+1h / T+4h 的 IV 值及变化"""
+    """从 iv_history.db 查询合约在 T0 / T+1h / T+4h 的 IV 值及变化
+    若本地无数据，返回空（由调用方异步补充）"""
     if not IV_DB.exists():
         return {}
     try:
         conn = sqlite3.connect(IV_DB)
-        # 查询 T0 前后 10 分钟 + T+1h + T+4h 的数据
         rows = conn.execute(
             "SELECT ts, mark_iv FROM iv_snapshots "
             "WHERE instrument=? AND ts BETWEEN ? AND ? ORDER BY ts",
@@ -130,10 +130,8 @@ def get_iv_changes(instrument: str, t0_ts: int) -> dict:
         if not rows:
             return {}
 
-        # T0 最近点
         t0_row = min(rows, key=lambda r: abs(r[0] - t0_ts))
         iv0 = t0_row[1]
-
         result = {"iv_at_t0": round(iv0, 2)}
 
         for hours in [1, 4, 24]:
@@ -147,6 +145,54 @@ def get_iv_changes(instrument: str, t0_ts: int) -> dict:
         return result
     except Exception as e:
         logger.warning(f"查询 IV 数据失败 {instrument}: {e}")
+        return {}
+
+
+async def fetch_iv_from_deribit(session: aiohttp.ClientSession, instrument: str, t0_ts: int) -> dict:
+    """从 Deribit 主网拉取期权历史 IV（当 iv_history.db 无数据时的回退）
+    使用 get_tradingview_chart_data 拉取 1 小时 K 线的 mark_iv"""
+    try:
+        # 拉取 T0 前后 25 小时的 1 小时 K 线
+        start_ms = (t0_ts - 3600) * 1000
+        end_ms = (t0_ts + 25 * 3600) * 1000
+        url = f"{MAINNET_URL}/public/get_tradingview_chart_data"
+        params = {
+            "instrument_name": instrument,
+            "start_timestamp": start_ms,
+            "end_timestamp": end_ms,
+            "resolution": "60"
+        }
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            data = await resp.json()
+            if 'result' not in data or data['result'].get('status') != 'ok':
+                return {}
+            result_data = data['result']
+            ticks = result_data.get('ticks', [])
+            iv_vals = result_data.get('iv', [])  # mark_iv 字段
+            if not ticks or not iv_vals or len(ticks) != len(iv_vals):
+                return {}
+
+        # 找最接近 T0 的点
+        t0_row = min(zip(ticks, iv_vals), key=lambda x: abs(x[0] - t0_ts * 1000))
+        iv0 = t0_row[1]
+        if not iv0:
+            return {}
+
+        result = {"iv_at_t0": round(iv0, 2), "source": "deribit_api"}
+
+        for hours in [1, 4, 24]:
+            target_ms = (t0_ts + hours * 3600) * 1000
+            nearby = [(t, v) for t, v in zip(ticks, iv_vals) if abs(t - target_ms) < 3600000 and v]
+            if nearby:
+                best = min(nearby, key=lambda x: abs(x[0] - target_ms))
+                iv_n = best[1]
+                result[f"iv_chg_t{hours}h"] = round(iv_n - iv0, 2)
+                result[f"iv_t{hours}h"] = round(iv_n, 2)
+
+        logger.info(f"从 Deribit API 获取 {instrument} IV@T0={iv0:.1f}%")
+        return result
+    except Exception as e:
+        logger.warning(f"从 Deribit 获取 IV 失败 {instrument}: {e}")
         return {}
 
 
@@ -256,11 +302,12 @@ async def update_impact():
                     changes[label] = None
                     needs_update = True
 
-            # ── IV 变化（从本地 SQLite 查，无需网络）────────────
+            # ── IV 变化（先查本地 SQLite，无数据则从 Deribit API 拉）────────────
             iv_changes = record.get('iv_changes', {})
-            # 如果缺少 T+24h 数据，强制重新查询
             if call_inst and (not iv_changes.get('iv_at_t0') or 'iv_chg_t24h' not in iv_changes):
                 iv_data = get_iv_changes(call_inst, t0_ts)
+                if not iv_data:
+                    iv_data = await fetch_iv_from_deribit(session, call_inst, t0_ts)
                 if iv_data:
                     iv_changes.update(iv_data)
                     needs_update = True
