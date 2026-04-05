@@ -859,7 +859,7 @@ class SimplifiedTradeLogger:
                 f"现货价格: ${result.spot_price:.2f}\n"
                 + (f"Combo ID: {combo_id}\n" if combo_id else "")
                 + f"盈亏平衡: ${be_lower:.2f} ~ ${be_upper:.2f}\n"
-                + f"下单数量: {trade_amount} BTC\n"
+                + f"下单数量: {result.call_option.quantity} BTC\n"
                 + f"看涨期权: {result.call_option.instrument_name}\n"
                 f"  执行价: ${result.call_option.strike_price:.2f}\n"
                 f"  入场价(BTC): {call_entry_btc:.6f}\n"
