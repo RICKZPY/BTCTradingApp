@@ -1853,6 +1853,41 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
             if not trades_html:
                 trades_html = '<div class="empty">📭 暂无历史交易</div>'
 
+            # v3 策略交易记录
+            v3_log = BASE_DIR / "logs" / "v3_trades.log"
+            v3_trades_html = ''
+            if v3_log.exists():
+                v3_content = v3_log.read_text(encoding='utf-8')
+                v3_entries = [e.strip() for e in v3_content.split('=' * 80) if '账户: vXkaBDto' in e]
+                for entry in reversed(v3_entries[-10:]):
+                    lines = {k.strip(): v.strip() for line in entry.split('\n')
+                             if ':' in line for k, v in [line.split(':', 1)]}
+                    t_time = lines.get('交易时间', '')[:16]
+                    t_news = lines.get('新闻', '')[:80]
+                    t_score = lines.get('分数', '')
+                    t_spot = lines.get('现货', '')
+                    t_call = lines.get('看涨', '')
+                    t_put = lines.get('看跌', '')
+                    t_cost = lines.get('估算成本', '')
+                    v3_trades_html += f"""
+<div class="trade-card" style="border-left:3px solid #5AC8FA">
+  <div class="trade-header">
+    <span class="trade-time">🕐 {t_time}</span>
+    <span style="font-size:13px;font-weight:700;color:#5AC8FA">💰 {t_cost}</span>
+  </div>
+  <div class="trade-news">📰 {t_news}</div>
+  <div class="trade-row">
+    <span>分数: {t_score}</span>
+    <span>现货: {t_spot}</span>
+  </div>
+  <div class="trade-row">
+    <span>📈 {t_call}</span>
+    <span>📉 {t_put}</span>
+  </div>
+</div>"""
+            if not v3_trades_html:
+                v3_trades_html = '<div class="empty">📭 暂无 v3 策略交易</div>'
+
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             html = f"""<!DOCTYPE html>
     <html>
@@ -1926,6 +1961,9 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 
       <div class="section-title">📜 历史交易（最近10笔）</div>
       {trades_html}
+
+      <div class="section-title">🧪 v3 策略交易（vXkaBDto 账户）</div>
+      {v3_trades_html}
     </div>
     </body>
     </html>"""
