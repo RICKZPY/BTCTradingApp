@@ -252,6 +252,8 @@ class MobileFriendlyStatusAPI:
                             spot_str = position.get('现货价格', '0').replace('$', '').replace(',', '')
                             spot = float(spot_str)
                             if strike and call_e and put_e and spot:
+                                # 盈亏平衡 = 执行价 ± 总权利金(USD per BTC)
+                                # 不乘数量，因为盈亏平衡是价格概念
                                 total_prem_usd = (call_e + put_e) * spot
                                 be_lower = strike - total_prem_usd
                                 be_upper = strike + total_prem_usd

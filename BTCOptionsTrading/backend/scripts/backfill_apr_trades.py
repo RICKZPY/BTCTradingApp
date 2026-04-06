@@ -122,9 +122,10 @@ def build_entry(t):
     spot_val = float(t['spot'].replace('$', '').replace(',', ''))
     call_e = float(t['call_entry'])
     put_e = float(t['put_entry'])
-    total_prem = (call_e + put_e) * float(t['amount']) * spot_val
-    be_lower = float(strike) - total_prem
-    be_upper = float(strike) + total_prem
+    # 盈亏平衡 = 执行价 ± 总权利金(USD per BTC)，不乘数量
+    total_prem_usd = (call_e + put_e) * spot_val
+    be_lower = float(strike) - total_prem_usd
+    be_upper = float(strike) + total_prem_usd
     return (
         f"\n{SEP}\n"
         f"交易时间: {t['time']}\n"
