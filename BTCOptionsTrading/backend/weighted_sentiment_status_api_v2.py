@@ -64,6 +64,8 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_get('/api/news-events-v2', self.handle_news_events_v2)
         self.app.router.add_post('/webhook/news', self.handle_news_webhook)
         self.app.router.add_post('/webhook/news-v3', self.handle_news_webhook_v3)
+        self.app.router.add_post('/vol/open', self.handle_vol_open)
+        self.app.router.add_post('/vol/close', self.handle_vol_close)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
         self.app.router.add_get('/news-impact', self.handle_news_impact_page)
@@ -138,7 +140,7 @@ class MobileFriendlyStatusAPI:
                 
                 <div class="endpoint">
                     <h3>⚡ Vol 账户持仓（qCoXRSu6）</h3>
-                    <p>IV Reversion 策略 - 卖出 OTM Strangle，收取高 IV 权利金</p>
+                    <p>Theta Harvesting 策略 - 卖出 ATM Straddle，新闻止损</p>
                     <p><a href="/vol-account">查看持仓 →</a> &nbsp; <a href="/api/vol-account">JSON →</a></p>
                 </div>
             </div>
@@ -579,7 +581,7 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
     </div>
     <div class="formula-row">
       <span class="formula-label">Vol 账户</span>
-      <span class="formula-expr">IV Reversion（qCoXRSu6）— 卖出 ±5% OTM Strangle，收取高 IV 权利金</span>
+      <span class="formula-expr">Theta Harvesting（qCoXRSu6）— 卖出 ATM Straddle，横盘收 theta，重大新闻自动平仓</span>
       <span class="formula-note">触发：ATM IV ≥ 55% | <a href="/vol-account" style="color:#007AFF">查看 Vol 账户持仓 →</a></span>
     </div>
   </div>
@@ -1556,8 +1558,44 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
         asyncio.create_task(self._process_webhook_v3(news_items))
         return web.json_response({"received": len(news_items), "status": "processing"})
 
+    async def handle_vol_open(self, request):
+        """手动/定时触发 Vol 账户开仓"""
+        try:
+            import sys
+            sys.path.insert(0, str(BASE_DIR))
+            from vol_account_strategy import VolAccountStrategy
+            vol = VolAccountStrategy()
+            result = await vol.open_position()
+            if result:
+                return web.json_response({"status": "opened", "premium_usd": result['premium_usd']},
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False))
+            return web.json_response({"status": "skipped"},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+
+    async def handle_vol_close(self, request):
+        """手动触发 Vol 账户平仓"""
+        try:
+            body = await request.json()
+            reason = body.get('reason', '手动平仓')
+            import sys
+            sys.path.insert(0, str(BASE_DIR))
+            from vol_account_strategy import VolAccountStrategy
+            vol = VolAccountStrategy()
+            result = await vol.close_position(reason)
+            if result:
+                return web.json_response({"status": "closed", "pnl_usd": result['pnl_usd']},
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False))
+            return web.json_response({"status": "no_position"},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+
     async def _process_webhook_v3(self, news_items: list):
-        """处理 v3 新闻，用 vXkaBDto 账户执行 ATM Straddle"""
+        """处理 v3 新闻：1) 触发 vXkaBDto 账户下单；2) 触发 Vol 账户平仓"""
         import sys, os
         sys.path.insert(0, str(BASE_DIR))
         try:
@@ -1688,6 +1726,18 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
                 with open(LOG_FILE, 'a', encoding='utf-8') as f:
                     f.write(log_entry)
                 logger.info(f"✓ v3 下单成功: {call_inst} + {put_inst} | ${total_cost:.2f}")
+
+                # 同时触发 Vol 账户（qCoXRSu6）平仓：重大新闻来了，卖出的 Straddle 需要止损
+                try:
+                    from vol_account_strategy import VolAccountStrategy
+                    vol = VolAccountStrategy()
+                    vol_state = vol.get_state()
+                    if vol_state.get('has_position'):
+                        reason = f"新闻止损 [{score}/10 A={a_score} B={b_score}]: {title[:50]}"
+                        await vol.close_position(reason)
+                        logger.info(f"  ✓ Vol 账户已平仓（新闻止损）")
+                except Exception as ve:
+                    logger.warning(f"  Vol 账户平仓失败: {ve}")
 
         except Exception as e:
             logger.error(f"v3 webhook 处理异常: {e}", exc_info=True)
@@ -1931,9 +1981,14 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
       <div class="subtitle">账户: qCoXRSu6 | 更新时间: {now_str}</div>
 
       <div class="strategy-box">
-    <strong>策略：IV Reversion (OTM Strangle)</strong><br>
-    当 ATM IV ≥ 55% 时，卖出 +5% OTM Call + 卖出 -5% OTM Put，收取高 IV 权利金。<br>
-    只要 BTC 在 ±5% 内到期，全部权利金归我们。
+    <strong>策略：Theta Harvesting（卖出 ATM Straddle + 新闻止损）</strong><br>
+    横盘期卖出 ATM Straddle，每天收取 theta 衰减的权利金。<br>
+    当 v3 打分出重大新闻（A≥3 + B≥2）时，自动买回平仓，锁定已赚的 theta。价格止损：BTC 移动超过 ±3% 时也自动平仓。
+    <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
+      <button onclick="openPos()" style="background:#34C759;color:white;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600">📈 开仓</button>
+      <button onclick="closePos()" style="background:#FF3B30;color:white;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600">📉 手动平仓</button>
+    </div>
+    <div id="act-result" style="margin-top:8px;font-size:13px;color:#555"></div>
       </div>
 
       <div class="account-box">
@@ -1967,6 +2022,26 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
       <div class="section-title">🧪 v3 策略交易（vXkaBDto 账户）</div>
       {v3_trades_html}
     </div>
+    <script>
+    async function openPos(){{
+      document.getElementById('act-result').textContent='开仓中...';
+      try{{
+        const r=await fetch('/vol/open',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:'{{}}'}});
+        const d=await r.json();
+        if(d.status==='opened') document.getElementById('act-result').textContent='✅ 开仓成功，收入 $'+d.premium_usd.toFixed(2);
+        else document.getElementById('act-result').textContent='⏭ '+d.status;
+      }}catch(e){{document.getElementById('act-result').textContent='❌ '+e.message;}}
+    }}
+    async function closePos(){{
+      document.getElementById('act-result').textContent='平仓中...';
+      try{{
+        const r=await fetch('/vol/close',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{reason:'手动平仓'}})}});
+        const d=await r.json();
+        if(d.status==='closed'){{const s=d.pnl_usd>=0?'+':'';document.getElementById('act-result').textContent='✅ 平仓成功 PnL: '+s+'$'+d.pnl_usd.toFixed(2);}}
+        else document.getElementById('act-result').textContent='⏭ 无持仓';
+      }}catch(e){{document.getElementById('act-result').textContent='❌ '+e.message;}}
+    }}
+    </script>
     </body>
     </html>"""
             return web.Response(text=html, content_type='text/html', charset='utf-8')
