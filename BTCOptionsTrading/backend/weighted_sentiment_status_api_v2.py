@@ -66,6 +66,7 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_post('/webhook/news-v3', self.handle_news_webhook_v3)
         self.app.router.add_post('/vol/open', self.handle_vol_open)
         self.app.router.add_post('/vol/close', self.handle_vol_close)
+        self.app.router.add_get('/api/perp-positions', self.handle_perp_positions)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
         self.app.router.add_get('/news-impact', self.handle_news_impact_page)
@@ -1558,6 +1559,20 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
         asyncio.create_task(self._process_webhook_v3(news_items))
         return web.json_response({"received": len(news_items), "status": "processing"})
 
+    async def handle_perp_positions(self, request):
+        """返回永续合约持仓列表"""
+        try:
+            state_file = BASE_DIR / "data" / "perp_positions.json"
+            if not state_file.exists():
+                return web.json_response({"positions": [], "count": 0},
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False))
+            positions = json.loads(state_file.read_text(encoding='utf-8'))
+            return web.json_response({"positions": positions, "count": len(positions)},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False, indent=2))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+
     async def handle_vol_open(self, request):
         """手动/定时触发 Vol 账户开仓"""
         try:
@@ -2021,6 +2036,9 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
 
       <div class="section-title">🧪 v3 策略交易（vXkaBDto 账户）</div>
       {v3_trades_html}
+
+      <div class="section-title">📊 永续合约持仓（两账户）</div>
+      <div id="perp-positions">加载中...</div>
     </div>
     <script>
     async function openPos(){{
@@ -2041,6 +2059,28 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
         else document.getElementById('act-result').textContent='⏭ 无持仓';
       }}catch(e){{document.getElementById('act-result').textContent='❌ '+e.message;}}
     }}
+    // 加载永续合约持仓
+    async function loadPerpPositions(){{
+      try{{
+        const r=await fetch('/api/perp-positions');
+        const d=await r.json();
+        const el=document.getElementById('perp-positions');
+        if(!d.positions||d.positions.length===0){{el.innerHTML='<div class="empty">📭 暂无永续合约持仓</div>';return;}}
+        let html='';
+        for(const p of d.positions){{
+          const dir=p.direction==='buy'?'📈 多头':'📉 空头';
+          const closed=p.closed?'<span style="background:#888;color:white;font-size:11px;padding:1px 6px;border-radius:6px;margin-left:4px">已平仓</span>':'';
+          const closeAt=p.close_time?p.close_time.slice(0,16):'';
+          html+=`<div class="trade-card" style="border-left:3px solid ${{p.direction==='buy'?'#34C759':'#FF3B30'}}">
+            <div class="trade-header"><span class="trade-time">🕐 ${{p.open_time.slice(0,16)}}</span><span>${{dir}} $${{p.amount_usd}}${{closed}}</span></div>
+            <div class="trade-news">📰 [${{p.score}}/10] ${{p.news_title}}</div>
+            <div class="trade-row"><span>账户: ${{p.account}}</span><span>入场: $${{p.entry_price.toLocaleString()}}</span><span>计划平仓: ${{closeAt}}</span></div>
+          </div>`;
+        }}
+        el.innerHTML=html;
+      }}catch(e){{document.getElementById('perp-positions').textContent='加载失败';}}
+    }}
+    loadPerpPositions();
     </script>
     </body>
     </html>"""

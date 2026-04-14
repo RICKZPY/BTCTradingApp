@@ -951,6 +951,14 @@ async def _main():
 
         logger.info(f"发现 {len(new_high_score_news)} 条新的高分新闻，开始评估...")
 
+        # 永续合约策略：所有 ≥7 分新闻都触发（不受 IV 过滤限制）
+        try:
+            from perp_strategy import execute_news_trade
+            for news in new_high_score_news:
+                asyncio.create_task(execute_news_trade(news.content, news.importance_score, news.sentiment))
+        except Exception as pe:
+            logger.warning(f"永续合约策略触发失败: {pe}")
+
         for news in new_high_score_news:
             logger.info(f"处理: [{news.importance_score}/10] {news.content[:60]}...")
             try:
