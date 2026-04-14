@@ -141,7 +141,7 @@ class MobileFriendlyStatusAPI:
                 
                 <div class="endpoint">
                     <h3>⚡ Vol 账户持仓（qCoXRSu6）</h3>
-                    <p>Theta Harvesting 策略 - 卖出 ATM Straddle，新闻止损</p>
+                    <p>新闻驱动永续合约策略 - 正面多头/负面空头，3天平仓</p>
                     <p><a href="/vol-account">查看持仓 →</a> &nbsp; <a href="/api/vol-account">JSON →</a></p>
                 </div>
             </div>
@@ -582,7 +582,7 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
     </div>
     <div class="formula-row">
       <span class="formula-label">Vol 账户</span>
-      <span class="formula-expr">Theta Harvesting（qCoXRSu6）— 卖出 ATM Straddle，横盘收 theta，重大新闻自动平仓</span>
+      <span class="formula-expr">新闻驱动永续合约（qCoXRSu6 + vXkaBDto）— 正面新闻多头，负面新闻空头，$1000/笔，3天平仓</span>
       <span class="formula-note">触发：ATM IV ≥ 55% | <a href="/vol-account" style="color:#007AFF">查看 Vol 账户持仓 →</a></span>
     </div>
   </div>
@@ -1996,14 +1996,11 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
       <div class="subtitle">账户: qCoXRSu6 | 更新时间: {now_str}</div>
 
       <div class="strategy-box">
-    <strong>策略：Theta Harvesting（卖出 ATM Straddle + 新闻止损）</strong><br>
-    横盘期卖出 ATM Straddle，每天收取 theta 衰减的权利金。<br>
-    当 v3 打分出重大新闻（A≥3 + B≥2）时，自动买回平仓，锁定已赚的 theta。价格止损：BTC 移动超过 ±3% 时也自动平仓。
-    <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">
-      <button onclick="openPos()" style="background:#34C759;color:white;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600">📈 开仓</button>
-      <button onclick="closePos()" style="background:#FF3B30;color:white;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600">📉 手动平仓</button>
-    </div>
-    <div id="act-result" style="margin-top:8px;font-size:13px;color:#555"></div>
+    <strong>策略：新闻驱动永续合约（BTC-PERPETUAL）</strong><br>
+    当新闻评分 ≥ 7 分时，根据情绪方向自动下单：<br>
+    📈 正面新闻 → 两账户各买入 $1,000 多头，3 天后平仓<br>
+    📉 负面新闻 → 两账户各卖出 $1,000 空头，3 天后平仓<br>
+    账户：qCoXRSu6 + vXkaBDto（测试网）
       </div>
 
       <div class="account-box">
@@ -2031,9 +2028,6 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
       <div class="section-title">📋 当前持仓</div>
       {pos_html}
 
-      <div class="section-title">📜 历史交易（最近10笔）</div>
-      {trades_html}
-
       <div class="section-title">🧪 v3 策略交易（vXkaBDto 账户）</div>
       {v3_trades_html}
 
@@ -2041,24 +2035,6 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
       <div id="perp-positions">加载中...</div>
     </div>
     <script>
-    async function openPos(){{
-      document.getElementById('act-result').textContent='开仓中...';
-      try{{
-        const r=await fetch('/vol/open',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:'{{}}'}});
-        const d=await r.json();
-        if(d.status==='opened') document.getElementById('act-result').textContent='✅ 开仓成功，收入 $'+d.premium_usd.toFixed(2);
-        else document.getElementById('act-result').textContent='⏭ '+d.status;
-      }}catch(e){{document.getElementById('act-result').textContent='❌ '+e.message;}}
-    }}
-    async function closePos(){{
-      document.getElementById('act-result').textContent='平仓中...';
-      try{{
-        const r=await fetch('/vol/close',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{reason:'手动平仓'}})}});
-        const d=await r.json();
-        if(d.status==='closed'){{const s=d.pnl_usd>=0?'+':'';document.getElementById('act-result').textContent='✅ 平仓成功 PnL: '+s+'$'+d.pnl_usd.toFixed(2);}}
-        else document.getElementById('act-result').textContent='⏭ 无持仓';
-      }}catch(e){{document.getElementById('act-result').textContent='❌ '+e.message;}}
-    }}
     // 加载永续合约持仓
     async function loadPerpPositions(){{
       try{{
