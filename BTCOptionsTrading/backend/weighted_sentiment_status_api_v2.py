@@ -67,6 +67,8 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_post('/vol/open', self.handle_vol_open)
         self.app.router.add_post('/vol/close', self.handle_vol_close)
         self.app.router.add_get('/api/perp-positions', self.handle_perp_positions)
+        self.app.router.add_get('/api/perp-price', self.handle_perp_price)
+        self.app.router.add_get('/perp', self.handle_perp_page)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
         self.app.router.add_get('/news-impact', self.handle_news_impact_page)
@@ -142,7 +144,7 @@ class MobileFriendlyStatusAPI:
                 <div class="endpoint">
                     <h3>⚡ Vol 账户持仓（qCoXRSu6）</h3>
                     <p>新闻驱动永续合约策略 - 正面多头/负面空头，3天平仓</p>
-                    <p><a href="/vol-account">查看持仓 →</a> &nbsp; <a href="/api/vol-account">JSON →</a></p>
+                    <p><a href="/vol-account">查看 Vol 账户 →</a> &nbsp; <a href="/perp">永续合约持仓详情 →</a></p>
                 </div>
             </div>
         </body>
@@ -1573,6 +1575,169 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
             return web.json_response({"error": str(e)}, status=500,
                 dumps=lambda o: json.dumps(o, ensure_ascii=False))
 
+    async def handle_perp_price(self, request):
+        """返回 BTC-PERPETUAL 从指定时间开始的 1 小时 K 线"""
+        since_ts = int(request.rel_url.query.get('since', 0))
+        if not since_ts:
+            since_ts = int(datetime.now().timestamp()) - 3 * 86400
+        try:
+            end_ts = int(datetime.now().timestamp())
+            async with aiohttp.ClientSession() as session:
+                r = await session.get(
+                    "https://www.deribit.com/api/v2/public/get_tradingview_chart_data",
+                    params={
+                        "instrument_name": "BTC-PERPETUAL",
+                        "start_timestamp": since_ts * 1000,
+                        "end_timestamp": end_ts * 1000,
+                        "resolution": "60"
+                    }, timeout=aiohttp.ClientTimeout(total=10)
+                )
+                data = await r.json()
+            if 'result' not in data or data['result'].get('status') != 'ok':
+                return web.json_response({"candles": []},
+                    dumps=lambda o: json.dumps(o, ensure_ascii=False))
+            res = data['result']
+            candles = [{"ts": t, "close": c}
+                       for t, c in zip(res.get('ticks', []), res.get('close', []))]
+            return web.json_response({"candles": candles},
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+        except Exception as e:
+            return web.json_response({"error": str(e), "candles": []}, status=500,
+                dumps=lambda o: json.dumps(o, ensure_ascii=False))
+
+    async def handle_perp_page(self, request):
+        """永续合约持仓详情页面"""
+        state_file = BASE_DIR / "data" / "perp_positions.json"
+        positions = []
+        if state_file.exists():
+            try:
+                positions = json.loads(state_file.read_text(encoding='utf-8'))
+            except Exception:
+                pass
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>永续合约持仓</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;padding:16px;background:#f0f2f5}}
+.container{{max-width:900px;margin:0 auto}}
+h1{{color:#333;font-size:22px;margin-bottom:4px}}
+.subtitle{{color:#888;font-size:13px;margin-bottom:16px}}
+.back-link{{display:inline-block;margin-bottom:16px;color:#007AFF;text-decoration:none;font-size:14px}}
+.card{{background:white;border-radius:12px;padding:16px;margin-bottom:16px;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+.card-header{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}
+.dir-badge{{color:white;font-size:12px;padding:3px 10px;border-radius:10px;font-weight:700}}
+.news{{font-size:13px;color:#555;padding:8px;background:#f8f9fa;border-radius:8px;margin-bottom:10px;border-left:3px solid #007AFF}}
+.info-row{{display:flex;flex-wrap:wrap;gap:16px;font-size:13px;color:#555;margin-bottom:8px}}
+.pnl{{font-size:16px;font-weight:700;margin-top:6px}}
+.chart-wrap{{position:relative;height:160px;margin-top:10px}}
+.toggle-chart{{font-size:12px;color:#007AFF;cursor:pointer;margin-top:6px}}
+.empty{{text-align:center;padding:40px;color:#aaa}}
+.closed-badge{{font-size:11px;background:#888;color:white;padding:1px 6px;border-radius:6px;margin-left:6px}}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="/vol-account" class="back-link">← 返回 Vol 账户</a>
+  <h1>📊 永续合约持仓</h1>
+  <div class="subtitle">更新时间: {now_str} | 两账户合计 {len(positions)} 条</div>
+  <div id="cards">{'<div class="empty">📭 暂无持仓记录</div>' if not positions else ''}</div>
+</div>
+<script>
+const positions = {json.dumps(positions, ensure_ascii=False)};
+const charts = {{}};
+
+async function getCurrentSpot() {{
+  try {{
+    const r = await fetch('https://www.deribit.com/api/v2/public/get_index_price?index_name=btc_usd');
+    const d = await r.json();
+    return d.result.index_price;
+  }} catch(e) {{ return 0; }}
+}}
+
+async function renderCards() {{
+  const spot = await getCurrentSpot();
+  const container = document.getElementById('cards');
+  if (!positions.length) return;
+  let html = '';
+  positions.forEach((p, i) => {{
+    const isLong = p.direction === 'buy';
+    const dirColor = isLong ? '#34C759' : '#FF3B30';
+    const dirLabel = isLong ? '📈 多头' : '📉 空头';
+    const pnlUsd = spot > 0 ? (isLong ? (spot - p.entry_price) / p.entry_price : (p.entry_price - spot) / p.entry_price) * p.amount_usd : 0;
+    const pnlPct = spot > 0 ? (isLong ? (spot - p.entry_price) / p.entry_price : (p.entry_price - spot) / p.entry_price) * 100 : 0;
+    const pnlColor = pnlUsd >= 0 ? '#34C759' : '#FF3B30';
+    const sign = pnlUsd >= 0 ? '+' : '';
+    const closedBadge = p.closed ? '<span class="closed-badge">已平仓</span>' : '';
+    const closeAt = p.close_time ? p.close_time.slice(0,16) : '';
+    html += `
+<div class="card">
+  <div class="card-header">
+    <span class="dir-badge" style="background:${{dirColor}}">${{dirLabel}}</span>
+    <span style="font-size:13px;color:#888">🕐 ${{p.open_time.slice(0,16)}}</span>
+    <span style="font-size:13px;color:#888">账户: ${{p.account}}</span>
+    ${{closedBadge}}
+  </div>
+  <div class="news">📰 [${{p.score}}/10] ${{p.news_title}}</div>
+  <div class="info-row">
+    <span>💰 入场价: <b>$${{p.entry_price.toLocaleString()}}</b></span>
+    <span>💵 仓位: $${{p.amount_usd}}</span>
+    ${{spot > 0 ? '<span>📍 当前价: <b>$' + spot.toLocaleString() + '</b></span>' : ''}}
+    <span>⏰ 平仓: ${{closeAt}}</span>
+  </div>
+  ${{spot > 0 ? '<div class="pnl" style="color:' + pnlColor + '">📊 浮动PnL: ' + sign + '$' + pnlUsd.toFixed(2) + ' (' + sign + pnlPct.toFixed(2) + '%)</div>' : ''}}
+  <div class="toggle-chart" onclick="toggleChart(${{i}}, '${{p.open_time}}', ${{p.entry_price}})">📈 查看 BTC 价格走势 ▼</div>
+  <div id="chart-${{i}}" style="display:none">
+    <div class="chart-wrap"><canvas id="canvas-${{i}}"></canvas></div>
+  </div>
+</div>`;
+  }});
+  container.innerHTML = html;
+}}
+
+async function toggleChart(idx, openTime, entryPrice) {{
+  const div = document.getElementById('chart-' + idx);
+  const hidden = div.style.display === 'none';
+  div.style.display = hidden ? 'block' : 'none';
+  if (!hidden || charts[idx]) return;
+  const sinceTs = Math.floor(new Date(openTime).getTime() / 1000);
+  const r = await fetch('/api/perp-price?since=' + sinceTs);
+  const d = await r.json();
+  if (!d.candles || !d.candles.length) return;
+  const priceData = d.candles.map(c => ({{x: c.ts, y: c.close}}));
+  const ctx = document.getElementById('canvas-' + idx).getContext('2d');
+  charts[idx] = new Chart(ctx, {{
+    type: 'line',
+    data: {{ datasets: [
+      {{label: 'BTC 价格', data: priceData, borderColor: '#007AFF', backgroundColor: 'rgba(0,122,255,0.06)', borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: true}},
+      {{label: '入场价 $' + entryPrice.toLocaleString(), data: priceData.map(p => ({{x: p.x, y: entryPrice}})), borderColor: 'rgba(255,149,0,0.8)', borderWidth: 1.5, borderDash: [5,3], pointRadius: 0, fill: false}}
+    ]}},
+    options: {{
+      responsive: true, maintainAspectRatio: false,
+      plugins: {{ legend: {{ display: true, position: 'top', labels: {{ font: {{ size: 10 }} }} }},
+        tooltip: {{ callbacks: {{ title: i => new Date(i[0].parsed.x).toLocaleString('zh-CN') }} }}
+      }},
+      scales: {{
+        x: {{ type: 'time', time: {{ tooltipFormat: 'MM-dd HH:mm', displayFormats: {{ hour: 'MM-dd HH:mm' }} }}, ticks: {{ maxTicksLimit: 5, font: {{ size: 10 }} }} }},
+        y: {{ ticks: {{ font: {{ size: 10 }}, callback: v => '$' + v.toLocaleString() }} }}
+      }}
+    }}
+  }});
+}}
+
+renderCards();
+setInterval(renderCards, 30000);
+</script>
+</body>
+</html>"""
+        return web.Response(text=html, content_type='text/html', charset='utf-8')
+
     async def handle_vol_open(self, request):
         """手动/定时触发 Vol 账户开仓"""
         try:
@@ -2031,7 +2196,7 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
       <div class="section-title">🧪 v3 策略交易（vXkaBDto 账户）</div>
       {v3_trades_html}
 
-      <div class="section-title">📊 永续合约持仓（两账户）</div>
+      <div class="section-title">📊 永续合约持仓（两账户）<a href="/perp" style="font-size:12px;color:#007AFF;font-weight:400;margin-left:8px">查看详情 →</a></div>
       <div id="perp-positions">加载中...</div>
     </div>
     <script>
