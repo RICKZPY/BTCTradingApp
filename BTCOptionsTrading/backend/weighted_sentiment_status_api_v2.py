@@ -2120,6 +2120,54 @@ setInterval(renderCards, 30000);
             if not v3_trades_html:
                 v3_trades_html = '<div class="empty">📭 暂无 v3 策略交易</div>'
 
+            # 永续合约持仓（服务端渲染卡片 + 客户端加载价格图）
+            perp_state_file = BASE_DIR / "data" / "perp_positions.json"
+            perp_positions = []
+            if perp_state_file.exists():
+                try:
+                    perp_positions = json.loads(perp_state_file.read_text(encoding='utf-8'))
+                except Exception:
+                    pass
+
+            perp_html = ''
+            if not perp_positions:
+                perp_html = '<div class="empty">📭 暂无永续合约持仓</div>'
+            else:
+                for i, p in enumerate(perp_positions):
+                    is_long = p.get('direction') == 'buy'
+                    dir_color = '#34C759' if is_long else '#FF3B30'
+                    dir_label = '📈 多头' if is_long else '📉 空头'
+                    closed_badge = '<span style="font-size:11px;background:#888;color:white;padding:1px 6px;border-radius:6px;margin-left:4px">已平仓</span>' if p.get('closed') else ''
+                    open_time = p.get('open_time', '')[:16]
+                    close_time = p.get('close_time', '')[:16]
+                    entry_price = p.get('entry_price', 0)
+                    amount = p.get('amount_usd', 0)
+                    news = p.get('news_title', '')[:70]
+                    score = p.get('score', 0)
+                    account = p.get('account', '')
+                    since_ts = int(datetime.fromisoformat(p.get('open_time', datetime.now().isoformat()).replace('Z', '+00:00')).timestamp())
+
+                    perp_html += f"""
+<div class="trade-card" style="border-left:3px solid {dir_color}">
+  <div class="trade-header">
+    <span style="background:{dir_color};color:white;font-size:12px;padding:2px 8px;border-radius:8px;font-weight:700">{dir_label}</span>
+    <span class="trade-time">🕐 {open_time}</span>
+    <span style="font-size:12px;color:#888">账户: {account}</span>
+    {closed_badge}
+  </div>
+  <div class="trade-news">📰 [{score}/10] {news}</div>
+  <div class="trade-row">
+    <span>入场价: <b>${entry_price:,.0f}</b></span>
+    <span>仓位: ${amount}</span>
+    <span>计划平仓: {close_time}</span>
+  </div>
+  <div id="perp-pnl-{i}" style="font-size:15px;font-weight:700;margin-top:6px;color:#aaa">PnL: 计算中...</div>
+  <div class="iv-toggle" onclick="togglePerpChart({i}, {since_ts}, {entry_price}, '{('buy' if is_long else 'sell')}')">📈 查看 BTC 价格走势 ▼</div>
+  <div id="perp-chart-{i}" style="display:none;margin-top:8px">
+    <div style="position:relative;height:160px"><canvas id="perp-canvas-{i}"></canvas></div>
+  </div>
+</div>"""
+
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             html = f"""<!DOCTYPE html>
     <html>
@@ -2196,32 +2244,65 @@ setInterval(renderCards, 30000);
       <div class="section-title">🧪 v3 策略交易（vXkaBDto 账户）</div>
       {v3_trades_html}
 
-      <div class="section-title">📊 永续合约持仓（两账户）<a href="/perp" style="font-size:12px;color:#007AFF;font-weight:400;margin-left:8px">查看详情 →</a></div>
-      <div id="perp-positions">加载中...</div>
+      <div class="section-title">📊 永续合约持仓（两账户）</div>
+      {perp_html}
     </div>
     <script>
-    // 加载永续合约持仓
-    async function loadPerpPositions(){{
-      try{{
-        const r=await fetch('/api/perp-positions');
-        const d=await r.json();
-        const el=document.getElementById('perp-positions');
-        if(!d.positions||d.positions.length===0){{el.innerHTML='<div class="empty">📭 暂无永续合约持仓</div>';return;}}
-        let html='';
-        for(const p of d.positions){{
-          const dir=p.direction==='buy'?'📈 多头':'📉 空头';
-          const closed=p.closed?'<span style="background:#888;color:white;font-size:11px;padding:1px 6px;border-radius:6px;margin-left:4px">已平仓</span>':'';
-          const closeAt=p.close_time?p.close_time.slice(0,16):'';
-          html+=`<div class="trade-card" style="border-left:3px solid ${{p.direction==='buy'?'#34C759':'#FF3B30'}}">
-            <div class="trade-header"><span class="trade-time">🕐 ${{p.open_time.slice(0,16)}}</span><span>${{dir}} $${{p.amount_usd}}${{closed}}</span></div>
-            <div class="trade-news">📰 [${{p.score}}/10] ${{p.news_title}}</div>
-            <div class="trade-row"><span>账户: ${{p.account}}</span><span>入场: $${{p.entry_price.toLocaleString()}}</span><span>计划平仓: ${{closeAt}}</span></div>
-          </div>`;
-        }}
-        el.innerHTML=html;
-      }}catch(e){{document.getElementById('perp-positions').textContent='加载失败';}}
+    // 实时 PnL 和价格图
+    const perpCharts = {{}};
+    async function getSpot(){{
+      try{{const r=await fetch('https://www.deribit.com/api/v2/public/get_index_price?index_name=btc_usd');return (await r.json()).result.index_price;}}catch(e){{return 0;}}
     }}
-    loadPerpPositions();
+    async function updatePerpPnl(){{
+      const spot=await getSpot();
+      if(!spot)return;
+      document.querySelectorAll('[id^="perp-pnl-"]').forEach(el=>{{
+        const i=parseInt(el.id.split('-')[2]);
+        const card=el.closest('.trade-card');
+        const isLong=card.querySelector('[style*="34C759"]')!==null;
+        const entryText=card.querySelector('.trade-row b');
+        if(!entryText)return;
+        const entry=parseFloat(entryText.textContent.replace(/[$,]/g,''));
+        const amount=1000;
+        const pnlPct=(isLong?(spot-entry)/entry:(entry-spot)/entry)*100;
+        const pnlUsd=pnlPct/100*amount;
+        const sign=pnlUsd>=0?'+':'';
+        const color=pnlUsd>=0?'#34C759':'#FF3B30';
+        el.style.color=color;
+        el.textContent='PnL: '+sign+'$'+pnlUsd.toFixed(2)+' ('+sign+pnlPct.toFixed(2)+'%)  当前: $'+spot.toLocaleString();
+      }});
+    }}
+    async function togglePerpChart(i, sinceTs, entryPrice, direction){{
+      const div=document.getElementById('perp-chart-'+i);
+      const hidden=div.style.display==='none';
+      div.style.display=hidden?'block':'none';
+      const toggle=div.previousElementSibling;
+      toggle.textContent=hidden?'📈 收起走势图 ▲':'📈 查看 BTC 价格走势 ▼';
+      if(!hidden||perpCharts[i])return;
+      const r=await fetch('/api/perp-price?since='+sinceTs);
+      const d=await r.json();
+      if(!d.candles||!d.candles.length)return;
+      const priceData=d.candles.map(c=>({{x:c.ts,y:c.close}}));
+      const ctx=document.getElementById('perp-canvas-'+i).getContext('2d');
+      perpCharts[i]=new Chart(ctx,{{
+        type:'line',
+        data:{{datasets:[
+          {{label:'BTC价格',data:priceData,borderColor:'#007AFF',backgroundColor:'rgba(0,122,255,0.06)',borderWidth:1.5,pointRadius:0,tension:0.2,fill:true}},
+          {{label:'入场价 $'+entryPrice.toLocaleString(),data:priceData.map(p=>({{x:p.x,y:entryPrice}})),borderColor:'rgba(255,149,0,0.8)',borderWidth:1.5,borderDash:[5,3],pointRadius:0,fill:false}}
+        ]}},
+        options:{{
+          responsive:true,maintainAspectRatio:false,
+          plugins:{{legend:{{display:true,position:'top',labels:{{font:{{size:10}}}}}},
+            tooltip:{{callbacks:{{title:i=>new Date(i[0].parsed.x).toLocaleString('zh-CN')}}}}
+          }},
+          scales:{{
+            x:{{type:'time',time:{{tooltipFormat:'MM-dd HH:mm',displayFormats:{{hour:'MM-dd HH:mm'}}}},ticks:{{maxTicksLimit:5,font:{{size:10}}}}}},
+            y:{{ticks:{{font:{{size:10}},callback:v=>'$'+v.toLocaleString()}}}}
+          }}
+        }}
+      }});
+    }}
+    updatePerpPnl();setInterval(updatePerpPnl,30000);
     </script>
     </body>
     </html>"""
