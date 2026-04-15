@@ -2161,7 +2161,7 @@ setInterval(renderCards, 30000);
     <span>仓位: ${amount}</span>
     <span>计划平仓: {close_time}</span>
   </div>
-  <div id="perp-pnl-{i}" style="font-size:15px;font-weight:700;margin-top:6px;color:#aaa">PnL: 计算中...</div>
+  <div id="perp-pnl-{i}" data-direction="{('buy' if is_long else 'sell')}" data-entry="{entry_price}" data-amount="{amount}" style="font-size:15px;font-weight:700;margin-top:6px;color:#aaa">PnL: 计算中...</div>
   <div class="iv-toggle" onclick="togglePerpChart({i}, {since_ts}, {entry_price}, '{('buy' if is_long else 'sell')}')">📈 查看 BTC 价格走势 ▼</div>
   <div id="perp-chart-{i}" style="display:none;margin-top:8px">
     <div style="position:relative;height:160px"><canvas id="perp-canvas-{i}"></canvas></div>
@@ -2175,6 +2175,8 @@ setInterval(renderCards, 30000);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vol 账户持仓</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <style>
     body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;margin:0;padding:16px;background:#f0f2f5}}
     .container{{max-width:800px;margin:0 auto}}
@@ -2257,13 +2259,10 @@ setInterval(renderCards, 30000);
       const spot=await getSpot();
       if(!spot)return;
       document.querySelectorAll('[id^="perp-pnl-"]').forEach(el=>{{
-        const i=parseInt(el.id.split('-')[2]);
-        const card=el.closest('.trade-card');
-        const isLong=card.querySelector('[style*="34C759"]')!==null;
-        const entryText=card.querySelector('.trade-row b');
-        if(!entryText)return;
-        const entry=parseFloat(entryText.textContent.replace(/[$,]/g,''));
-        const amount=1000;
+        const isLong=el.dataset.direction==='buy';
+        const entry=parseFloat(el.dataset.entry||0);
+        const amount=parseFloat(el.dataset.amount||1000);
+        if(!entry)return;
         const pnlPct=(isLong?(spot-entry)/entry:(entry-spot)/entry)*100;
         const pnlUsd=pnlPct/100*amount;
         const sign=pnlUsd>=0?'+':'';
