@@ -39,10 +39,18 @@ logger = logging.getLogger(__name__)
 
 
 ACCOUNTS = {
-    "qCoXRSu6": os.getenv('VOL_STRATEGY_DERIBIT_API_SECRET',
-                           'GhL6l32FUgm7tKgtRJVsngdF5Cp5j-JhVIr5Js4kvTQ'),
-    "vXkaBDto": os.getenv('DERIBIT_API_SECRET',
-                           'J54Ccsff9g5PlYK-ELRVunkvnST-cZ6puVBXbhwYrnY'),
+    "qCoXRSu6": {
+        "secret": os.getenv('VOL_STRATEGY_DERIBIT_API_SECRET',
+                             'GhL6l32FUgm7tKgtRJVsngdF5Cp5j-JhVIr5Js4kvTQ'),
+        "news_url": "http://43.106.51.106:5003/api/weighted-sentiment/news",  # v3 新打分（含 novelty）
+        "label": "v3-novelty",
+    },
+    "vXkaBDto": {
+        "secret": os.getenv('DERIBIT_API_SECRET',
+                             'J54Ccsff9g5PlYK-ELRVunkvnST-cZ6puVBXbhwYrnY'),
+        "news_url": "http://43.106.51.106:5004/api/weighted-sentiment/news",  # v3 三维打分（含传导链）
+        "label": "v3-3dim",
+    },
 }
 
 
@@ -202,12 +210,12 @@ async def close_position_by_order(api_key: str, api_secret: str, pos: dict) -> b
         return True
 
 
-async def execute_news_trade(news_title: str, score: float, sentiment: str):
-    """根据新闻执行两个账户的交易"""
+async def execute_news_trade(news_title: str, score: float, sentiment: str,
+                            target_account: str = None):
+    """根据新闻执行指定账户（或全部账户）的交易"""
     if score < MIN_SCORE:
         return
 
-    # 判断方向
     sentiment_lower = sentiment.lower()
     is_positive = any(w in sentiment_lower for w in ['positive', '积极', '正面', 'bullish'])
     is_negative = any(w in sentiment_lower for w in ['negative', '负面', '消极', 'bearish'])
@@ -219,8 +227,9 @@ async def execute_news_trade(news_title: str, score: float, sentiment: str):
     direction = "buy" if is_positive else "sell"
     positions = load_positions()
 
-    for api_key, api_secret in ACCOUNTS.items():
-        # 检查该账户是否已有未平仓的同方向持仓（48h 内）
+    accounts_to_trade = {target_account: ACCOUNTS[target_account]} if target_account else ACCOUNTS
+    for api_key, acct in accounts_to_trade.items():
+        api_secret = acct['secret']
         recent = [p for p in positions
                   if p['account'] == api_key and not p['closed']
                   and p['direction'] == direction]
@@ -230,9 +239,67 @@ async def execute_news_trade(news_title: str, score: float, sentiment: str):
 
         pos = await open_position(api_key, api_secret, direction, news_title, score, sentiment)
         if pos:
+            pos['news_source'] = acct.get('label', '')
             positions.append(pos)
 
     save_positions(positions)
+
+
+# 已处理新闻 GUID 追踪（避免重复下单）
+PROCESSED_GUIDS_FILE = BASE_DIR / "data" / "perp_processed_guids.json"
+
+def load_processed_guids() -> set:
+    if PROCESSED_GUIDS_FILE.exists():
+        try:
+            return set(json.loads(PROCESSED_GUIDS_FILE.read_text(encoding='utf-8')))
+        except Exception:
+            pass
+    return set()
+
+def save_processed_guids(guids: set):
+    PROCESSED_GUIDS_FILE.parent.mkdir(exist_ok=True)
+    # 只保留最近 500 条
+    recent = sorted(guids)[-500:]
+    PROCESSED_GUIDS_FILE.write_text(json.dumps(recent, ensure_ascii=False), encoding='utf-8')
+
+
+async def poll_all_accounts():
+    """每个账户独立拉自己的新闻源，发现新的高分新闻就下单"""
+    processed = load_processed_guids()
+    new_guids = set()
+
+    for api_key, acct in ACCOUNTS.items():
+        news_url = acct['news_url']
+        label = acct['label']
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(news_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    data = await r.json()
+            news_list = data.get('data', {}).get('news', data.get('news', []))
+        except Exception as e:
+            logger.warning(f"{api_key} ({label}): 拉取新闻失败 {news_url}: {e}")
+            continue
+
+        for item in news_list:
+            guid = item.get('guid', '')
+            score = float(item.get('importance_score', 0))
+            sentiment = item.get('sentiment', '')
+            title = item.get('title', '')
+
+            if score < MIN_SCORE:
+                continue
+            # 用 account+guid 作为唯一 key，避免两个账户互相干扰
+            unique_key = f"{api_key}:{guid}"
+            if unique_key in processed:
+                continue
+
+            new_guids.add(unique_key)
+            logger.info(f"{api_key} ({label}): [{score}/10] {title[:50]}")
+            await execute_news_trade(title, score, sentiment, target_account=api_key)
+
+    if new_guids:
+        processed.update(new_guids)
+        save_processed_guids(processed)
 
 
 async def check_and_close_expired():
@@ -247,7 +314,7 @@ async def check_and_close_expired():
         close_time = datetime.fromisoformat(pos['close_time'])
         if now >= close_time:
             api_key = pos['account']
-            api_secret = ACCOUNTS.get(api_key, '')
+            api_secret = ACCOUNTS.get(api_key, {}).get('secret', '')
             if api_secret:
                 success = await close_position_by_order(api_key, api_secret, pos)
                 if success:
@@ -259,4 +326,7 @@ async def check_and_close_expired():
 
 
 if __name__ == "__main__":
-    asyncio.run(check_and_close_expired())
+    async def main():
+        await check_and_close_expired()
+        await poll_all_accounts()
+    asyncio.run(main())
