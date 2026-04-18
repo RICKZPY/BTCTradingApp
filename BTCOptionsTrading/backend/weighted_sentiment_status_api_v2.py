@@ -68,6 +68,7 @@ class MobileFriendlyStatusAPI:
         self.app.router.add_post('/vol/close', self.handle_vol_close)
         self.app.router.add_get('/api/perp-positions', self.handle_perp_positions)
         self.app.router.add_get('/api/perp-price', self.handle_perp_price)
+        self.app.router.add_get('/api/spot-price', self.handle_spot_price)
         self.app.router.add_get('/perp', self.handle_perp_page)
         self.app.router.add_get('/iv-chart', self.handle_iv_chart)
         self.app.router.add_get('/iv-detail-chart', self.handle_iv_detail_chart)
@@ -1575,6 +1576,21 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
             return web.json_response({"error": str(e)}, status=500,
                 dumps=lambda o: json.dumps(o, ensure_ascii=False))
 
+    async def handle_spot_price(self, request):
+        """返回当前 BTC 现货价格（代理 Deribit API，避免 CORS）"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://www.deribit.com/api/v2/public/get_index_price",
+                    params={"index_name": "btc_usd"},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as r:
+                    data = await r.json()
+                    price = data['result']['index_price']
+                    return web.json_response({"price": price})
+        except Exception as e:
+            return web.json_response({"price": 0, "error": str(e)})
+
     async def handle_perp_price(self, request):
         """返回 BTC-PERPETUAL 从指定时间开始的 1 小时 K 线"""
         since_ts = int(request.rel_url.query.get('since', 0))
@@ -2215,7 +2231,7 @@ setInterval(renderCards, 30000);
     // 实时 PnL 和价格图
     const perpCharts = {{}};
     async function getSpot(){{
-      try{{const r=await fetch('https://www.deribit.com/api/v2/public/get_index_price?index_name=btc_usd');return (await r.json()).result.index_price;}}catch(e){{return 0;}}
+      try{{const r=await fetch('/api/spot-price');return (await r.json()).price||0;}}catch(e){{return 0;}}
     }}
     async function updatePerpPnl(){{
       const spot=await getSpot();
