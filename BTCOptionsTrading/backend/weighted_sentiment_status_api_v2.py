@@ -533,6 +533,16 @@ class MobileFriendlyStatusAPI:
             option_total_pnl = sum(v.get('total_pnl_usd', 0) for v in pnl_data.values())
             option_pnl_color = '#34C759' if option_total_pnl >= 0 else '#FF3B30'
             option_pnl_sign = '+' if option_total_pnl >= 0 else ''
+            # 读取基准值（用于重置总盈亏）
+            main_pl_baseline = 0.0
+            try:
+                baseline_file = BASE_DIR / "data" / "main_account_baseline.json"
+                if baseline_file.exists():
+                    bl = json.loads(baseline_file.read_text(encoding='utf-8'))
+                    main_pl_baseline = bl.get('total_pl_baseline', 0)
+            except Exception:
+                pass
+            main_pnl = main_pnl - main_pl_baseline  # 相对盈亏
             main_pnl_color = '#34C759' if main_pnl >= 0 else '#FF3B30'
             main_pnl_sign = '+' if main_pnl >= 0 else ''
 
