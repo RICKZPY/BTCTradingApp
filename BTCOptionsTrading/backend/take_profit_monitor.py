@@ -29,9 +29,10 @@ TP_LOG = BASE_DIR / "logs" / "take_profit.log"
 MAINNET_URL = "https://www.deribit.com/api/v2"
 TESTNET_URL = "https://test.deribit.com/api/v2"
 
-# 止盈参数
-TP_PRICE_PCT = 0.03   # BTC 价格移动 ±3%
-TP_PNL_PCT = 0.10     # straddle 盈利 10%
+# 止盈止损参数
+TP_PRICE_PCT = 0.03   # BTC 价格移动 ±3% → 止盈
+TP_PNL_PCT = 0.10     # straddle 盈利 10% → 止盈
+SL_PNL_PCT = -0.015   # straddle 亏损 1.5% → 止损（新增）
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -230,6 +231,9 @@ async def monitor():
                 pnl_pct = (current_value - entry_cost) / entry_cost if entry_cost > 0 else 0
                 if pnl_pct >= TP_PNL_PCT:
                     reason = f"PnL 止盈 {pnl_pct*100:.1f}%（成本 ${entry_cost:.0f} → 现值 ${current_value:.0f}）"
+                    await close_position(session, token, call_inst, put_inst, quantity, reason)
+                elif pnl_pct <= SL_PNL_PCT:
+                    reason = f"PnL 止损 {pnl_pct*100:.1f}%（成本 ${entry_cost:.0f} → 现值 ${current_value:.0f}）"
                     await close_position(session, token, call_inst, put_inst, quantity, reason)
 
 

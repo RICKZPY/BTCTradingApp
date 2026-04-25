@@ -33,6 +33,7 @@ MAINNET_URL = "https://www.deribit.com/api/v2"
 TRADE_AMOUNT_USD = 1000   # 每笔 $1000
 HOLD_DAYS = 3             # 持仓 3 天后平仓
 MIN_SCORE = 7             # 最低触发分数
+SL_PCT = 0.015            # 止损：亏损 1.5% 平仓（新增）
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -207,6 +208,10 @@ async def close_position_by_order(api_key: str, api_secret: str, pos: dict) -> b
         )
         log_trade(log_entry)
         logger.info(f"✓ 平仓 {api_key}: PnL={sign}${pnl_usd:.2f}")
+        # 保存 PnL 到持仓记录
+        pos['close_pnl_usd'] = round(pnl_usd, 2)
+        pos['close_pnl_pct'] = round(pnl_pct, 2)
+        pos['close_price'] = close_price
         return True
 
 
@@ -303,23 +308,55 @@ async def poll_all_accounts():
 
 
 async def check_and_close_expired():
-    """检查并平仓到期持仓"""
+    """检查并平仓到期持仓 + 止损检查"""
     positions = load_positions()
     now = datetime.now(timezone.utc)
     updated = False
 
+    # 获取当前价格（用于止损检查）
+    current_spot = 0.0
+    try:
+        async with aiohttp.ClientSession() as session:
+            r = await session.get(f"{MAINNET_URL}/public/get_index_price",
+                                  params={"index_name": "btc_usd"})
+            current_spot = (await r.json())['result']['index_price']
+    except Exception:
+        pass
+
     for pos in positions:
         if pos.get('closed'):
             continue
+
+        api_key = pos['account']
+        api_secret = ACCOUNTS.get(api_key, {}).get('secret', '')
+        if not api_secret:
+            continue
+
+        # 条件 1：到期平仓
         close_time = datetime.fromisoformat(pos['close_time'])
         if now >= close_time:
-            api_key = pos['account']
-            api_secret = ACCOUNTS.get(api_key, {}).get('secret', '')
-            if api_secret:
-                success = await close_position_by_order(api_key, api_secret, pos)
-                if success:
-                    pos['closed'] = True
-                    updated = True
+            success = await close_position_by_order(api_key, api_secret, pos)
+            if success:
+                pos['closed'] = True
+                pos['close_reason'] = '到期平仓'
+                updated = True
+            continue
+
+        # 条件 2：止损 1.5%（新增）
+        if current_spot > 0:
+            entry = pos.get('entry_price', pos.get('entry_spot', 0))
+            if entry > 0:
+                if pos['direction'] == 'buy':
+                    pnl_pct = (current_spot - entry) / entry
+                else:
+                    pnl_pct = (entry - current_spot) / entry
+                if pnl_pct <= -SL_PCT:
+                    logger.info(f"止损触发 {api_key}: PnL={pnl_pct*100:.2f}%")
+                    success = await close_position_by_order(api_key, api_secret, pos)
+                    if success:
+                        pos['closed'] = True
+                        pos['close_reason'] = f'止损 {pnl_pct*100:.2f}%'
+                        updated = True
 
     if updated:
         save_positions(positions)

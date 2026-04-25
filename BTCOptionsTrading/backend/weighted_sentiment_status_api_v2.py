@@ -2110,6 +2110,19 @@ setInterval(renderCards, 30000);
                 except Exception:
                     pass
 
+            # 计算永续合约总体盈亏（已平仓 + 未平仓）
+            perp_total_pnl = 0.0
+            perp_open_count = 0
+            perp_closed_count = 0
+            for p in perp_positions:
+                if p.get('closed') and p.get('close_pnl_usd') is not None:
+                    perp_total_pnl += p['close_pnl_usd']
+                    perp_closed_count += 1
+                elif not p.get('closed'):
+                    perp_open_count += 1
+            perp_pnl_color = '#34C759' if perp_total_pnl >= 0 else '#FF3B30'
+            perp_pnl_sign = '+' if perp_total_pnl >= 0 else ''
+
             perp_html = ''
             if not perp_positions:
                 perp_html = '<div class="empty">📭 暂无永续合约持仓</div>'
@@ -2217,6 +2230,11 @@ setInterval(renderCards, 30000);
           <div class="account-item">
         <div class="account-label">当前持仓</div>
         <div class="account-value">{len(positions)} 个</div>
+          </div>
+          <div class="account-item">
+        <div class="account-label">永续合约总盈亏</div>
+        <div class="account-value" style="color:{perp_pnl_color}">{perp_pnl_sign}${perp_total_pnl:.2f}</div>
+        <div class="account-label">{perp_closed_count} 已平仓 / {perp_open_count} 持仓中</div>
           </div>
     </div>
       </div>
