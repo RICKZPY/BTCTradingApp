@@ -575,18 +575,22 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
     <div class="formula-title">🎯 主账户交易策略（0366QIa2）</div>
     <div class="formula-row">
       <span class="formula-label">策略一</span>
-      <span class="formula-expr">ATM Straddle — 测试新闻打分准确性，每次 8 分新闻触发时买入 ATM Straddle，$10,000 仓位</span>
+      <span class="formula-expr">ATM Straddle — 每次 8 分新闻触发时买入 ATM Straddle，$10,000 仓位</span>
       <span class="formula-note">触发：评分 ≥ 8 | IV &lt; 55% | IV 趋势向上 | 48h 无重复</span>
     </div>
     <div class="formula-row">
+      <span class="formula-label">止盈止损</span>
+      <span class="formula-expr">止盈：BTC 移动 ±3% 或 PnL +10% | 🛑 止损：PnL -1.5%（每 5 分钟检查）</span>
+    </div>
+    <div class="formula-row">
       <span class="formula-label">策略二</span>
-      <span class="formula-expr">Calendar Spread — 同一账户，当近远期 IV 差 ≥ 3% 时，卖近期买远期，净成本 $200-500</span>
+      <span class="formula-expr">Calendar Spread — 当近远期 IV 差 ≥ 3% 时，卖近期买远期，净成本 $200-500</span>
       <span class="formula-note">触发：近期 IV ≥ 50% 且 近远期 IV 差 ≥ 3%</span>
     </div>
     <div class="formula-row">
       <span class="formula-label">Vol 账户</span>
-      <span class="formula-expr">新闻驱动永续合约（qCoXRSu6 + vXkaBDto）— 正面新闻多头，负面新闻空头，$1000/笔，3天平仓</span>
-      <span class="formula-note">触发：ATM IV ≥ 55% | <a href="/vol-account" style="color:#007AFF">查看 Vol 账户持仓 →</a></span>
+      <span class="formula-expr">永续合约 — qCoXRSu6(←5003) + vXkaBDto(←5004)，正面多头/负面空头，$1000/笔</span>
+      <span class="formula-note">平仓：3天到期 或 🛑 止损 -1.5% | <a href="/vol-account" style="color:#007AFF">查看 Vol 账户 →</a></span>
     </div>
   </div>
   <div class="formula-box">
@@ -2205,11 +2209,19 @@ setInterval(renderCards, 30000);
       <div class="subtitle">账户: qCoXRSu6 | 更新时间: {now_str}</div>
 
       <div class="strategy-box">
-    <strong>策略：新闻驱动永续合约（BTC-PERPETUAL）</strong><br>
-    当新闻评分 ≥ 7 分时，根据情绪方向自动下单：<br>
-    📈 正面新闻 → 两账户各买入 $1,000 多头，3 天后平仓<br>
-    📉 负面新闻 → 两账户各卖出 $1,000 空头，3 天后平仓<br>
-    账户：qCoXRSu6 + vXkaBDto（测试网）
+    <strong>策略：新闻驱动永续合约（BTC-PERPETUAL）</strong><br><br>
+    <strong>📡 新闻源（两账户独立）</strong><br>
+    • <b>qCoXRSu6</b> ← <code>5003</code> 端口（v3 新打分，含 novelty 衰减）<br>
+    • <b>vXkaBDto</b> ← <code>5004</code> 端口（v3 三维打分，含传导链规则）<br><br>
+    <strong>📋 下单规则</strong><br>
+    • 新闻评分 ≥ 7 分时触发<br>
+    • 📈 正面新闻 → 买入 $1,000 多头<br>
+    • 📉 负面新闻 → 卖出 $1,000 空头<br>
+    • 同方向已有持仓时跳过（不重复开仓）<br><br>
+    <strong>📤 平仓规则</strong><br>
+    • ⏰ 到期平仓：开仓 3 天后自动平仓<br>
+    • 🛑 止损平仓：亏损 ≥ 1.5% 时自动平仓（每 5 分钟检查）<br>
+    • 两个平仓条件独立运行，满足任一即触发
       </div>
 
       <div class="account-box">
