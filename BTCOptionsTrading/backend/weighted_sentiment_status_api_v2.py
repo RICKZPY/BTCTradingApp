@@ -500,6 +500,42 @@ class MobileFriendlyStatusAPI:
             positions = self._parse_trade_log()
             pnl_data = self._load_pnl()
 
+            # 从 Deribit 获取主账户概览
+            main_balance = 0.0
+            main_equity = 0.0
+            main_margin = 0.0
+            main_pnl = 0.0
+            try:
+                import os
+                api_key = os.getenv('WEIGHTED_SENTIMENT_DERIBIT_API_KEY', '0366QIa2')
+                api_secret = os.getenv('WEIGHTED_SENTIMENT_DERIBIT_API_SECRET', '')
+                if api_key and api_secret:
+                    async with aiohttp.ClientSession() as _s:
+                        _r = await _s.get("https://test.deribit.com/api/v2/public/auth", params={
+                            "grant_type": "client_credentials",
+                            "client_id": api_key, "client_secret": api_secret
+                        })
+                        _d = await _r.json()
+                        if 'result' in _d:
+                            _token = _d['result']['access_token']
+                            _r2 = await _s.get("https://test.deribit.com/api/v2/private/get_account_summary",
+                                params={"currency": "BTC"},
+                                headers={"Authorization": f"Bearer {_token}"})
+                            _acc = (await _r2.json()).get('result', {})
+                            main_balance = _acc.get('balance', 0)
+                            main_equity = _acc.get('equity', 0)
+                            main_margin = _acc.get('initial_margin', 0)
+                            main_pnl = _acc.get('total_pl', 0)
+            except Exception as _e:
+                logger.warning(f"获取主账户概览失败: {_e}")
+
+            # 计算期权策略总盈亏（从 pnl_data）
+            option_total_pnl = sum(v.get('total_pnl_usd', 0) for v in pnl_data.values())
+            option_pnl_color = '#34C759' if option_total_pnl >= 0 else '#FF3B30'
+            option_pnl_sign = '+' if option_total_pnl >= 0 else ''
+            main_pnl_color = '#34C759' if main_pnl >= 0 else '#FF3B30'
+            main_pnl_sign = '+' if main_pnl >= 0 else ''
+
             RECENT_COUNT = 20
             reversed_positions = list(reversed(positions))  # 最新在前
             recent = reversed_positions[:RECENT_COUNT]
@@ -591,6 +627,36 @@ h1{{color:#333;font-size:22px;margin-bottom:4px}}
       <span class="formula-label">Vol 账户</span>
       <span class="formula-expr">永续合约 — qCoXRSu6(←5003) + vXkaBDto(←5004)，正面多头/负面空头，$1000/笔</span>
       <span class="formula-note">平仓：3天到期 或 🛑 止损 -1.5% | <a href="/vol-account" style="color:#007AFF">查看 Vol 账户 →</a></span>
+    </div>
+  </div>
+  <div class="formula-box" style="border-left-color:#007AFF">
+    <div class="formula-title" style="color:#007AFF">📊 主账户概览（0366QIa2）</div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:14px">
+      <div style="text-align:center">
+        <div style="font-size:11px;color:#888">总余额</div>
+        <div style="font-size:18px;font-weight:700">{main_balance:.4f} BTC</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:11px;color:#888">净值</div>
+        <div style="font-size:18px;font-weight:700">{main_equity:.4f} BTC</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:11px;color:#888">占用保证金</div>
+        <div style="font-size:18px;font-weight:700">{main_margin:.4f} BTC</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:11px;color:#888">账户总盈亏</div>
+        <div style="font-size:18px;font-weight:700;color:{main_pnl_color}">{main_pnl_sign}{main_pnl:.4f} BTC</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:11px;color:#888">期权策略总盈亏</div>
+        <div style="font-size:18px;font-weight:700;color:{option_pnl_color}">{option_pnl_sign}${option_total_pnl:.2f}</div>
+        <div style="font-size:10px;color:#aaa">{len(pnl_data)} 条记录</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:11px;color:#888">活跃持仓</div>
+        <div style="font-size:18px;font-weight:700">{len(positions)} 条</div>
+      </div>
     </div>
   </div>
   <div class="formula-box">
